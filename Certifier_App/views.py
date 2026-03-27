@@ -21,6 +21,20 @@ from .serializers import (
 )
 
 from .utils.eddsa import sign_data, VERIFY_KEY, verify_signature
+from rest_framework.permissions import IsAuthenticated #Try
+
+#TRYYY
+from django.contrib.auth import get_user_model
+from rest_framework.permissions import IsAuthenticated
+from rest_framework import generics
+from .serializers import UserSerializer
+
+User = get_user_model()
+
+class UserListView(generics.ListAPIView):
+    queryset = User.objects.all()
+    serializer_class = UserSerializer
+    permission_classes = [IsAuthenticated]  # pwede mo palitan later
 
 
 # ================= TEST USER HELPER =================
@@ -50,7 +64,7 @@ class CertificateListView(generics.ListAPIView):
 class CertificateCreateView(generics.CreateAPIView):
     queryset = Certificate.objects.all()
     serializer_class = CertificateCreateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def perform_create(self, serializer):
         user = get_test_user()

@@ -1,0 +1,31 @@
+Sample Data,,,
+firstname,lastname,course,section
+Dodong,Cruz,IT,3A
+Rico,Blanco,IT,2A
+Raymond,Marasigan,IT,3B
+,,,
+API Specification,,,
+URI,HTTP Method,RequestBody,Example
+/<yoursurname>/students,GET,none,"Action: Retrieve all students 
+Response: All Students (json)"
+/<yoursurname>/students/{id},GET,Long {id},"Action: Retrieve student by id
+Response: Student (json)
+Not Found: ""Student with id {id} not found."""
+/<yoursurname>/students,POST,"String firstname
+String lastname
+String course
+String section","Action: Add a new student
+Response: New Student (json)"
+/<yoursurname>/students/{id},PUT,"Integer {id}
+String firstname
+String lastname
+String course
+String section","Action: Update new student base on ID
+Response: Updated Student (json)
+Not Found: ""Student with id {id} not found."""
+/<yoursurname>/students/{id},DELETE,Long {id},"Action: Delete student base on ID
+Response: ""Student with id {id} deleted.""
+Not Found: ""Student with id {id} not found."""
+/<yoursurname>/students/search/{key},GET,String key,"Action: Search students base on key
+Response: Student/s (json)
+Not Found: {}"

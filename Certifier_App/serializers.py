@@ -7,6 +7,17 @@ from rest_framework import serializers
 from .models import User, Template, Certificate, BulkUpload
 from .utils.eddsa import sign_data, VERIFY_KEY
 
+#TRY FOR ALL USERS
+from django.contrib.auth import get_user_model
+from rest_framework import serializers
+
+User = get_user_model()
+
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['id', 'email', 'username', 'role']
+
 # ================= USER =================
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
