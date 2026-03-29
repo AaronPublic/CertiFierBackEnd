@@ -9,7 +9,7 @@ from rest_framework import generics
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-
+from rest_framework.exceptions import PermissionDenied
 from .models import Template, Certificate, BulkUpload
 from .serializers import (
     CertificateSerializer,
@@ -22,11 +22,8 @@ from .serializers import (
 
 from .utils.eddsa import sign_data, VERIFY_KEY, verify_signature
 from rest_framework.permissions import IsAuthenticated #Try
-
-#TRYYY
+from rest_framework.permissions import BasePermission
 from django.contrib.auth import get_user_model
-from rest_framework.permissions import IsAuthenticated
-from rest_framework import generics
 from .serializers import UserSerializer
 
 User = get_user_model()
@@ -34,47 +31,66 @@ User = get_user_model()
 class UserListView(generics.ListAPIView):
     queryset = User.objects.all()
     serializer_class = UserSerializer
-    permission_classes = [IsAuthenticated]  # pwede mo palitan later
+    permission_classes = [IsAuthenticated]
+    
+class IsAdminUserRole(BasePermission):
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and request.user.role == 'admin'
 
 
 # ================= TEST USER HELPER =================
 from django.contrib.auth import get_user_model
 User = get_user_model()
 
-def get_test_user():
-    return User.objects.first()
 
 
 # ================= STUDENT: VIEW OWN CERTS =================
 class MyCertificatesView(generics.ListAPIView):
     serializer_class = CertificateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return Certificate.objects.all()
+        return Certificate.objects.filter(owner=self.request.user)
 
 
 # ================= CERTIFICATE CRUD =================
 class CertificateListView(generics.ListAPIView):
-    queryset = Certificate.objects.all()
     serializer_class = CertificateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+
+        if user.role == 'admin':
+            return Certificate.objects.all()
+        return Certificate.objects.filter(owner=user)
 
 
 class CertificateCreateView(generics.CreateAPIView):
     queryset = Certificate.objects.all()
     serializer_class = CertificateCreateSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminUserRole]
 
     def perform_create(self, serializer):
-        user = get_test_user()
-        serializer.save(created_by=user, owner=user)
+        serializer.save(
+            created_by=self.request.user,
+            owner=self.request.user
+        )
 
 
 class CertificateDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Certificate.objects.all()
     serializer_class = CertificateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
+
+    def perform_update(self, serializer):
+        if self.request.user.role != 'admin':
+            raise PermissionDenied("Only admins can edit certificates")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if self.request.user.role != 'admin':
+            raise PermissionDenied("Only admins can delete certificates")
+        instance.delete()
 
 
 # ================= VERIFY (PUBLIC) =================
@@ -116,9 +132,11 @@ def verify_certificate(request, certificate_id):
 
 # ================= DOWNLOAD PDF =================
 @api_view(['GET'])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def download_certificate(request, pk):
     cert = get_object_or_404(Certificate, pk=pk)
+    if cert.owner != request.user and request.user.role != 'admin':
+        return Response({"error": "Unauthorized"}, status=403)
 
     buffer = BytesIO()
     p = canvas.Canvas(buffer)
@@ -138,6 +156,7 @@ def download_certificate(request, pk):
         buffer,
         as_attachment=True,
         filename=f"{cert.certificate_id}.pdf"
+
     )
 
 
@@ -145,29 +164,29 @@ def download_certificate(request, pk):
 class CertificatePreviewView(generics.RetrieveAPIView):
     queryset = Certificate.objects.all()
     serializer_class = CertificatePreviewSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
 
 # ================= TEMPLATE =================
 class TemplateView(generics.ListCreateAPIView):
     queryset = Template.objects.all()
     serializer_class = TemplateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAdminUserRole]
 
     def perform_create(self, serializer):
-        serializer.save(created_by=get_test_user())
+        serializer.save(created_by=self.request.user)
 
 
 class TemplateDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Template.objects.all()
     serializer_class = TemplateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAdminUserRole]
 
 
 # ================= BULK UPLOAD =================
 class BulkUploadListView(generics.ListAPIView):
     serializer_class = BulkUploadSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAdminUserRole]
 
     def get_queryset(self):
         return BulkUpload.objects.all()
@@ -176,26 +195,33 @@ class BulkUploadListView(generics.ListAPIView):
 class BulkUploadCreateView(generics.CreateAPIView):
     queryset = BulkUpload.objects.all()
     serializer_class = BulkUploadCreateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAdminUserRole]
 
     def perform_create(self, serializer):
-        serializer.save(uploaded_by=get_test_user())
+        serializer.save(uploaded_by=self.request.user)
 
 
 # ================= GENERATE CERTS FROM CSV =================
 @api_view(['POST'])
-@permission_classes([AllowAny])
+@permission_classes([IsAdminUserRole])
 def process_bulk_upload(request, pk):
     upload = get_object_or_404(BulkUpload, pk=pk)
 
-    created = []
+    try:
+        # Read CSV and count total rows
+        with upload.csv_file.open() as file:
+            decoded = file.read().decode('utf-8').splitlines()
+            reader = list(csv.DictReader(decoded))  # Convert to list to count rows
 
-    with upload.csv_file.open() as file:
-        decoded = file.read().decode('utf-8').splitlines()
-        reader = csv.DictReader(decoded)
+        upload.status = "PROCESSING"
+        upload.total_records = len(reader)
+        upload.processed_records = 0
+        upload.save()
+
+        created = []
 
         for row in reader:
-            user = get_test_user()
+            user = request.user  
 
             cert = Certificate.objects.create(
                 template=upload.template,
@@ -208,27 +234,24 @@ def process_bulk_upload(request, pk):
                 owner=user
             )
 
+            # EdDSA signing and hash
             data_string = cert.get_data_string()
             cert.data_hash = hashlib.sha256(data_string.encode()).hexdigest()
             cert.original_data_hash = cert.data_hash
-
             cert.signature = sign_data(data_string)
             cert.public_key = VERIFY_KEY.encode().hex()
-
             cert.save()
 
+            # Generate PDF
             buffer = BytesIO()
             p = canvas.Canvas(buffer)
-
             p.drawString(100, 750, f"Certificate ID: {cert.certificate_id}")
             p.drawString(100, 720, f"Name: {cert.full_name}")
             p.drawString(100, 690, f"Course: {cert.course}")
             p.drawString(100, 660, f"Issued By: {cert.issued_by}")
             p.drawString(100, 630, f"Date: {cert.date_issued}")
-
             p.showPage()
             p.save()
-
             buffer.seek(0)
 
             cert.file.save(
@@ -239,9 +262,18 @@ def process_bulk_upload(request, pk):
 
             created.append(cert.certificate_id)
 
-    upload.status = "COMPLETED"
-    upload.total_records = len(created)
-    upload.processed_records = len(created)
-    upload.save()
+            # Update processed_records dynamically
+            upload.processed_records += 1
+            upload.save(update_fields=['processed_records'])
 
-    return Response({"created": created})
+        # Mark as completed
+        upload.status = "COMPLETED"
+        upload.save(update_fields=['status'])
+
+        return Response({"created": created})
+
+    except Exception as e:
+        # Mark upload as failed in case of error
+        upload.status = "FAILED"
+        upload.save(update_fields=['status'])
+        return Response({"error": str(e)}, status=500)
