@@ -1,7 +1,12 @@
 from django.urls import path
 from . import views
+from rest_framework_simplejwt.views import TokenRefreshView
 
 urlpatterns = [
+    # ================= AUTH =================
+    path('auth/register/', views.register, name='register'),
+    path('auth/login/', views.CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 
     # ================= STUDENT =================
     path('my-certificates/', views.MyCertificatesView.as_view()),

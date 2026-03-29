@@ -55,7 +55,6 @@ class Certificate(models.Model):
         max_length=100,
         unique=True,
         default=generate_certificate_id,
-        editable=False
     )
 
     template = models.ForeignKey(

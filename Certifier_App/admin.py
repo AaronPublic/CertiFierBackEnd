@@ -56,6 +56,8 @@ class UserAdmin(BaseUserAdmin):
             obj.is_superuser = True
         super().save_model(request, obj, form, change)
 
+
+
 # ================= REGISTER MODELS =================
 admin.site.register(User, UserAdmin)
 admin.site.register(Certificate)

@@ -5,11 +5,12 @@ from django.http import FileResponse
 from django.core.files.base import ContentFile
 from django.shortcuts import get_object_or_404
 from reportlab.pdfgen import canvas
-from rest_framework import generics
+from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated, BasePermission
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
+from rest_framework_simplejwt.views import TokenObtainPairView
 from .models import Template, Certificate, BulkUpload
 from .serializers import (
     CertificateSerializer,
@@ -21,12 +22,18 @@ from .serializers import (
 )
 
 from .utils.eddsa import sign_data, VERIFY_KEY, verify_signature
-from rest_framework.permissions import IsAuthenticated #Try
-from rest_framework.permissions import BasePermission
 from django.contrib.auth import get_user_model
-from .serializers import UserSerializer
+from .serializers import UserSerializer, CustomTokenObtainPairSerializer
 
 User = get_user_model()
+
+
+# ================= AUTH: CUSTOM TOKEN VIEW =================
+class CustomTokenObtainPairView(TokenObtainPairView):
+    """
+    Custom login endpoint that returns access token + refresh token + user info
+    """
+    serializer_class = CustomTokenObtainPairSerializer
 
 class UserListView(generics.ListAPIView):
     queryset = User.objects.all()
@@ -38,9 +45,61 @@ class IsAdminUserRole(BasePermission):
         return request.user.is_authenticated and request.user.role == 'admin'
 
 
-# ================= TEST USER HELPER =================
-from django.contrib.auth import get_user_model
-User = get_user_model()
+# ================= AUTH: REGISTER =================
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def register(request):
+    """Register new user"""
+    
+    email = request.data.get('email')
+    username = request.data.get('username') or email
+    password = request.data.get('password')
+    first_name = (request.data.get('first_name') or '').strip()
+    last_name = (request.data.get('last_name') or '').strip()
+    role = request.data.get('role', 'student')  # Default to student
+
+    if not email or not password or not first_name or not last_name:
+        return Response(
+            {"error": "email, password, first_name, and last_name are required"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if User.objects.filter(email=email).exists():
+        return Response(
+            {"error": "Email already exists"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if User.objects.filter(username=username).exists():
+        return Response(
+            {"error": "Username already exists"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if role not in ['student', 'admin']:
+        return Response(
+            {"error": "Role must be 'student' or 'admin'"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    user = User.objects.create_user(
+        email=email,
+        username=username,
+        password=password,
+        first_name=first_name,
+        last_name=last_name,
+        role=role
+    )
+
+    return Response({
+        "id": user.id,
+        "email": user.email,
+        "username": user.username,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "full_name": f"{user.first_name} {user.last_name}".strip(),
+        "role": user.role
+    }, status=status.HTTP_201_CREATED)
 
 
 
@@ -99,26 +158,36 @@ class CertificateDetailView(generics.RetrieveUpdateDestroyAPIView):
 def verify_certificate(request, certificate_id):
     cert = get_object_or_404(Certificate, certificate_id=certificate_id)
 
-    current_hash = hashlib.sha256(cert.get_data_string().encode()).hexdigest()
+    data_string = cert.get_data_string()
+
+    current_hash = hashlib.sha256(data_string.encode()).hexdigest()
 
     if cert.original_data_hash and current_hash != cert.original_data_hash:
         cert.status = "INVALID"
-        cert.save()
+        cert.save(update_fields=['status'])
+
         return Response({
-            "certificate_id": certificate_id,
+            "certificate_id": cert.certificate_id,
             "status": "INVALID - DATA TAMPERED"
         })
 
-    if not verify_signature(cert.get_data_string(), cert.signature):
+    is_valid = verify_signature(
+        data_string,
+        cert.signature,
+        cert.public_key   
+    )
+
+    if not is_valid:
         cert.status = "INVALID"
-        cert.save()
+        cert.save(update_fields=['status'])
+
         return Response({
-            "certificate_id": certificate_id,
+            "certificate_id": cert.certificate_id,
             "status": "INVALID - SIGNATURE FAIL"
         })
 
     cert.status = "VALID"
-    cert.save()
+    cert.save(update_fields=['status'])
 
     return Response({
         "certificate_id": cert.certificate_id,
