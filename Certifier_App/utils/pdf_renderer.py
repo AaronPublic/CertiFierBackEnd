@@ -2,11 +2,11 @@ from io import BytesIO
 from datetime import date, datetime
 
 from django.core.files.base import ContentFile
-from PIL import Image
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import landscape
 
 
 def _clamp_pct(value, default=50.0):
@@ -71,22 +71,16 @@ def _load_background_reader(template):
         return None, None, None
 
     try:
-        with template.background.open('rb') as bg_file:
-            image = Image.open(bg_file)
-            image.load()
+        image_path = template.background.path  # IMPORTANT
+        reader = ImageReader(image_path)
 
-        if image.mode in ('RGBA', 'LA'):
-            rgb_image = Image.new('RGB', image.size, (255, 255, 255))
-            rgb_image.paste(image, mask=image.split()[-1])
-            image = rgb_image
-        elif image.mode not in ('RGB', 'L'):
-            image = image.convert('RGB')
+        width, height = reader.getSize()
 
-        width, height = image.size
-        return ImageReader(image), width, height
-    except Exception:
+        return reader, width, height
+
+    except Exception as e:
+        print("BACKGROUND LOAD ERROR:", e)
         return None, None, None
-
 
 def build_certificate_pdf_bytes(cert):
     template = cert.template
@@ -95,9 +89,14 @@ def build_certificate_pdf_bytes(cert):
     page_width, page_height = letter
 
     bg_reader, bg_width, bg_height = _load_background_reader(template)
-    if bg_reader is not None:
+    if bg_reader is not None and bg_width and bg_height:
         background_reader = bg_reader
-        page_width, page_height = bg_width, bg_height
+        if bg_width > bg_height:
+            page_width, page_height = landscape((bg_width, bg_height))
+        else:
+            page_width, page_height = bg_width, bg_height
+    else:
+        page_width, page_height = letter  # fallback safety
 
     if template and isinstance(template.placeholders, dict):
         raw_markers = template.placeholders.get('markers', [])

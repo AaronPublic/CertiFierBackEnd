@@ -32,8 +32,8 @@ ALLOWED_HOSTS = []
 AUTH_USER_MODEL = 'Certifier_App.User'
 
 #TRY ONLY
-MEDIA_URL = '/templates/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'templates')
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 # Application definition
 

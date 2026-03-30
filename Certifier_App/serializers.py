@@ -1,4 +1,5 @@
 import hashlib
+import json
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import get_user_model
@@ -28,15 +29,64 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'email', 'username', 'first_name', 'last_name', 'role']
+        fields = ['id', 'email', 'username', 'first_name', 'last_name', 'role', 'password']
+        extra_kwargs = {'password': {'write_only': True, 'required': False}}
+
+    def update(self, instance, validated_data):
+        # Kunin ang password at tanggalin sa validated_data
+        password = validated_data.pop('password', None)
+        
+        # I-update ang ibang fields
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+
+        # Eto ang pinaka-importante:
+        if password:
+            instance.set_password(password) # Hina-hash nito ang password
+            
+        instance.save()
+        return instance
 
 
 # ================= TEMPLATE =================
 class TemplateSerializer(serializers.ModelSerializer):
+    placeholders = serializers.JSONField(required=False)
+
     class Meta:
         model = Template
         fields = '__all__'
         read_only_fields = ['id', 'created_by', 'created_at']
+
+    def validate_placeholders(self, value):
+        # Normalize empty values so template upload does not fail with server errors.
+        if value in (None, ''):
+            return {'markers': []}
+
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise serializers.ValidationError('placeholders must be valid JSON.') from exc
+
+        if not isinstance(value, dict):
+            raise serializers.ValidationError('placeholders must be a JSON object.')
+
+        markers = value.get('markers', [])
+        if markers is None:
+            value['markers'] = []
+        elif not isinstance(markers, list):
+            raise serializers.ValidationError("placeholders.markers must be a list.")
+
+        return value
+
+    def create(self, validated_data):
+        validated_data.setdefault('placeholders', {'markers': []})
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        if 'placeholders' in validated_data and validated_data['placeholders'] in (None, ''):
+            validated_data['placeholders'] = {'markers': []}
+        return super().update(instance, validated_data)
 
 
 # ================= CERTIFICATE =================

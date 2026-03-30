@@ -216,6 +216,21 @@ def verify_certificate(request, certificate_id):
         "status": cert.status
     })
 
+# ================= USER MANAGEMENT (ADMIN ONLY) =================
+
+class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    Endpoint para makuha, ma-edit, o mabura ang isang specific user.
+    """
+    queryset = User.objects.all()
+    serializer_class = UserSerializer
+    permission_classes = [IsAdminUserRole] # Siguradong admin lang ang pwedeng gumalaw nito
+
+    def perform_destroy(self, instance):
+        # Proteksyon: Iwasan na mabura ng admin ang sarili niyang account
+        if instance == self.request.user:
+            raise PermissionDenied("You cannot delete your own admin account.")
+        instance.delete()
 
 # ================= DOWNLOAD PDF =================
 @api_view(['GET'])
