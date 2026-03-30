@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from pathlib import Path
 from datetime import timedelta
 
@@ -30,6 +31,9 @@ CORS_ALLOW_ALL_ORIGINS = True
 ALLOWED_HOSTS = []
 AUTH_USER_MODEL = 'Certifier_App.User'
 
+#TRY ONLY
+MEDIA_URL = '/templates/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'templates')
 
 # Application definition
 

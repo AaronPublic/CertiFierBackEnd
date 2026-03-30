@@ -1,10 +1,7 @@
 import csv
 import hashlib
-from io import BytesIO
 from django.http import FileResponse
-from django.core.files.base import ContentFile
 from django.shortcuts import get_object_or_404
-from reportlab.pdfgen import canvas
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated, BasePermission
@@ -22,6 +19,7 @@ from .serializers import (
 )
 
 from .utils.eddsa import sign_data, VERIFY_KEY, verify_signature
+from .utils.pdf_renderer import generate_and_attach_certificate_pdf
 from django.contrib.auth import get_user_model
 from .serializers import UserSerializer, CustomTokenObtainPairSerializer
 
@@ -138,6 +136,7 @@ class CertificateCreateView(generics.CreateAPIView):
 
 
 class CertificateDetailView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = Certificate.objects.all() # Idagdag ang queryset dito
     serializer_class = CertificateSerializer
     permission_classes = [IsAuthenticated]
 
@@ -147,9 +146,28 @@ class CertificateDetailView(generics.RetrieveUpdateDestroyAPIView):
         serializer.save()
 
     def perform_destroy(self, instance):
+        # 1. Check kung admin ang nagbubura
         if self.request.user.role != 'admin':
             raise PermissionDenied("Only admins can delete certificates")
+        
+        # 2. (Optional pero Recommended) Burahin din ang file sa storage
+        if instance.file:
+            instance.file.delete(save=False)
+            
+        # 3. Burahin ang record sa database
         instance.delete()
+
+
+def _get_or_generate_certificate_pdf(cert):
+    if cert.file and cert.file.name:
+        try:
+            if cert.file.storage.exists(cert.file.name):
+                return cert.file.open('rb')
+        except Exception:
+            pass
+
+    generate_and_attach_certificate_pdf(cert)
+    return cert.file.open('rb')
 
 
 # ================= VERIFY (PUBLIC) =================
@@ -204,36 +222,35 @@ def verify_certificate(request, certificate_id):
 @permission_classes([IsAuthenticated])
 def download_certificate(request, pk):
     cert = get_object_or_404(Certificate, pk=pk)
+
     if cert.owner != request.user and request.user.role != 'admin':
         return Response({"error": "Unauthorized"}, status=403)
 
-    buffer = BytesIO()
-    p = canvas.Canvas(buffer)
-
-    p.drawString(100, 750, f"Certificate ID: {cert.certificate_id}")
-    p.drawString(100, 720, f"Name: {cert.full_name}")
-    p.drawString(100, 690, f"Course: {cert.course}")
-    p.drawString(100, 660, f"Issued By: {cert.issued_by}")
-    p.drawString(100, 630, f"Date: {cert.date_issued}")
-
-    p.showPage()
-    p.save()
-
-    buffer.seek(0)
+    file_obj = _get_or_generate_certificate_pdf(cert)
 
     return FileResponse(
-        buffer,
+        file_obj,
         as_attachment=True,
         filename=f"{cert.certificate_id}.pdf"
-
     )
 
 
 # ================= CERTIFICATE PREVIEW =================
-class CertificatePreviewView(generics.RetrieveAPIView):
-    queryset = Certificate.objects.all()
-    serializer_class = CertificatePreviewSerializer
-    permission_classes = [IsAuthenticated]
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def preview_certificate(request, pk):
+    cert = get_object_or_404(Certificate, pk=pk)
+
+    if cert.owner != request.user and request.user.role != 'admin':
+        return Response({"error": "Unauthorized"}, status=403)
+
+    file_obj = _get_or_generate_certificate_pdf(cert)
+
+    return FileResponse(
+        file_obj,
+        as_attachment=False,
+        filename=f"{cert.certificate_id}.pdf"
+    )
 
 
 # ================= TEMPLATE =================
@@ -311,23 +328,7 @@ def process_bulk_upload(request, pk):
             cert.public_key = VERIFY_KEY.encode().hex()
             cert.save()
 
-            # Generate PDF
-            buffer = BytesIO()
-            p = canvas.Canvas(buffer)
-            p.drawString(100, 750, f"Certificate ID: {cert.certificate_id}")
-            p.drawString(100, 720, f"Name: {cert.full_name}")
-            p.drawString(100, 690, f"Course: {cert.course}")
-            p.drawString(100, 660, f"Issued By: {cert.issued_by}")
-            p.drawString(100, 630, f"Date: {cert.date_issued}")
-            p.showPage()
-            p.save()
-            buffer.seek(0)
-
-            cert.file.save(
-                f"{cert.certificate_id}.pdf",
-                ContentFile(buffer.read()),
-                save=True
-            )
+            generate_and_attach_certificate_pdf(cert)
 
             created.append(cert.certificate_id)
 

@@ -5,7 +5,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 urlpatterns = [
     # ================= AUTH =================
     path('auth/register/', views.register, name='register'),
-    path('auth/login/', views.CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('auth/login/', views.CustomTokenObtainPairView.as_view(), name='turoken_obtain_pair'),
     path('auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 
     # ================= STUDENT =================
@@ -20,10 +20,10 @@ urlpatterns = [
     path('certificates/', views.CertificateListView.as_view()),
     path('certificates/create/', views.CertificateCreateView.as_view()),
     path('certificates/<uuid:pk>/', views.CertificateDetailView.as_view()),
-    path('certificates/<uuid:pk>/preview/', views.CertificatePreviewView.as_view()), # ADD PREVIEW ENDPOINT
+    path('certificates/<uuid:pk>/preview/', views.preview_certificate),
 
 
-    # ================= TEMPLATE =================
+    # ================= TEMPLATE ================= 
     path('templates/', views.TemplateView.as_view()),
     path('templates/<uuid:pk>/', views.TemplateDetailView.as_view()),
 

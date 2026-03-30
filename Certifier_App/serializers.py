@@ -1,13 +1,11 @@
 import hashlib
-from io import BytesIO
-from reportlab.pdfgen import canvas
-from django.core.files.base import ContentFile
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import get_user_model
 
 from .models import Template, Certificate, BulkUpload
 from .utils.eddsa import sign_data, VERIFY_KEY
+from .utils.pdf_renderer import generate_and_attach_certificate_pdf
 
 User = get_user_model()
 
@@ -91,29 +89,8 @@ class CertificateCreateSerializer(serializers.ModelSerializer):
         # Save before PDF
         cert.save()
 
-        # ================= PDF GENERATION =================
-        buffer = BytesIO()
-        p = canvas.Canvas(buffer)
-
-        p.drawString(100, 750, f"Certificate ID: {cert.certificate_id}")
-        p.drawString(100, 720, f"Name: {cert.full_name}")
-        p.drawString(100, 690, f"Course: {cert.course}")
-        p.drawString(100, 660, f"Issued By: {cert.issued_by}")
-        p.drawString(100, 630, f"Date: {cert.date_issued}")
-
-        # Optional: show signature snippet
-        p.drawString(100, 600, f"Signature: {cert.signature[:30]}...")
-
-        p.showPage()
-        p.save()
-
-        buffer.seek(0)
-
-        cert.file.save(
-            f"{cert.certificate_id}.pdf",
-            ContentFile(buffer.read()),
-            save=True
-        )
+        # Render using template background + placeholders when available.
+        generate_and_attach_certificate_pdf(cert)
 
         return cert
 
@@ -163,7 +140,7 @@ class BulkUploadSerializer(serializers.ModelSerializer):
 class BulkUploadCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = BulkUpload
-        fields = ['csv_file', 'template']
+        fields = ['id', 'csv_file', 'template']
 
     def create(self, validated_data):
         request = self.context.get('request')
