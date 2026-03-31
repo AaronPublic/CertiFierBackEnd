@@ -7,6 +7,10 @@ urlpatterns = [
     path('auth/register/', views.register, name='register'),
     path('auth/login/', views.CustomTokenObtainPairView.as_view(), name='turoken_obtain_pair'),
     path('auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    
+    # ================= GOOGLE OAUTH =================
+    path('auth/google/login/', views.google_login_initiate, name='google_login_initiate'),
+    path('auth/google/callback/', views.google_callback, name='google_callback'),
 
     # ================= STUDENT =================
     path('my-certificates/', views.MyCertificatesView.as_view()),

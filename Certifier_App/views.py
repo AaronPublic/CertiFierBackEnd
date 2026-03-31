@@ -1,13 +1,16 @@
 import csv
 import hashlib
-from django.http import FileResponse
+import uuid
+from django.http import FileResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
+from django.urls import reverse
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated, BasePermission
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
 from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.tokens import RefreshToken
 from .models import Template, Certificate, BulkUpload
 from .serializers import (
     CertificateSerializer,
@@ -20,10 +23,193 @@ from .serializers import (
 
 from .utils.eddsa import sign_data, VERIFY_KEY, verify_signature
 from .utils.pdf_renderer import generate_and_attach_certificate_pdf
+from .utils.google_oauth import (
+    get_google_auth_url,
+    exchange_code_for_token,
+    get_user_info_from_id_token,
+    get_user_info_from_access_token,
+    validate_school_email,
+)
 from django.contrib.auth import get_user_model
 from .serializers import UserSerializer, CustomTokenObtainPairSerializer
+from django.views.decorators.clickjacking import xframe_options_exempt
+import secrets
 
 User = get_user_model()
+
+
+# ================= GOOGLE OAUTH HELPERS =================
+def get_or_create_user_from_google(google_user_data):
+    """
+    Get or create user from Google OAuth data
+    
+    Args:
+        google_user_data: Dictionary with email, name, picture from Google
+    
+    Returns:
+        Tuple (user, created) where created is bool indicating if user was created
+    """
+    email = google_user_data.get('email')
+    
+    if not email:
+        raise ValueError("Google response missing email field")
+    
+    # Validate school email
+    if not validate_school_email(email):
+        raise PermissionDenied(f"Only @ua.edu.ph emails are allowed. You provided: {email}")
+    
+    # Extract name from Google data
+    name = google_user_data.get('name', email.split('@')[0])
+    name_parts = name.split(' ', 1)
+    first_name = name_parts[0] if name_parts else 'User'
+    last_name = name_parts[1] if len(name_parts) > 1 else ''
+    
+    # Get or create user
+    user, created = User.objects.get_or_create(
+        email=email,
+        defaults={
+            'username': email.split('@')[0] + '_' + str(uuid.uuid4())[:6],
+            'first_name': first_name[:30],
+            'last_name': last_name[:30],
+            'role': 'student',  # Default role for OAuth users
+        }
+    )
+    
+    return user, created
+
+
+# ================= GOOGLE OAUTH ENDPOINTS =================
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def google_login_initiate(request):
+    """
+    Initiate Google OAuth login flow
+    
+    Query params:
+        return_to: URL to redirect to after auth (required)
+        hd: Hosted domain restriction (default: ua.edu.ph)
+    
+    Returns:
+        Redirect to Google OAuth consent screen
+    """
+    return_to = request.query_params.get('return_to')
+    hd = request.query_params.get('hd', 'ua.edu.ph')
+    
+    if not return_to:
+        return Response(
+            {'error': 'return_to parameter is required'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Generate state token for CSRF protection
+    state = f"{secrets.token_urlsafe(32)}:{return_to}"
+    
+    # Store state in session for verification in callback
+    request.session['google_oauth_state'] = state
+    request.session['google_oauth_return_to'] = return_to
+    request.session.save()
+    
+    # Get Google auth URL
+    google_auth_url = get_google_auth_url(state, return_to, hd)
+    
+    return HttpResponseRedirect(google_auth_url)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def google_callback(request):
+    """
+    Handle Google OAuth callback
+    
+    Query params:
+        code: Authorization code from Google
+        state: State token for CSRF verification
+        error: Error message if auth failed
+    
+    Returns:
+        Redirect to return_to URL with access token, role, and full_name
+    """
+    error = request.query_params.get('error')
+    state = request.query_params.get('state')
+    code = request.query_params.get('code')
+    
+    # Get stored return_to and state from session
+    session_state = request.session.get('google_oauth_state')
+    return_to = request.session.get('google_oauth_return_to', '/login')
+    
+    # Handle user cancellations or Google errors
+    if error:
+        error_msg = {
+            'access_denied': 'You denied access to Google account',
+            'invalid_scope': 'Invalid scope requested',
+            'invalid_request': 'Invalid request to Google',
+        }.get(error, f'Google auth error: {error}')
+        
+        return_url = f"{return_to}?error={error_msg}"
+        return HttpResponseRedirect(return_url)
+    
+    # Validate state for CSRF protection
+    if not session_state or not state or state != session_state:
+        return_url = f"{return_to}?error=CSRF validation failed"
+        return HttpResponseRedirect(return_url)
+    
+    if not code:
+        return_url = f"{return_to}?error=No authorization code received"
+        return HttpResponseRedirect(return_url)
+    
+    try:
+        # Exchange code for token
+        token_data = exchange_code_for_token(code)
+        id_token_str = token_data.get('id_token')
+        access_token_str = token_data.get('access_token')
+        
+        if not id_token_str:
+            return_url = f"{return_to}?error=Failed to retrieve ID token"
+            return HttpResponseRedirect(return_url)
+        
+        # Get user info from ID token
+        try:
+            user_data = get_user_info_from_id_token(id_token_str)
+        except Exception:
+            # Fallback to access token if ID token fails
+            user_data = get_user_info_from_access_token(access_token_str)
+        
+        # Get or create user
+        user, created = get_or_create_user_from_google(user_data)
+        
+        # Generate JWT tokens for our app
+        refresh = RefreshToken.for_user(user)
+        access_token = str(refresh.access_token)
+        
+        # Get full name
+        full_name = f"{user.first_name} {user.last_name}".strip() or user.username
+        
+        # Clear session data
+        request.session.pop('google_oauth_state', None)
+        request.session.pop('google_oauth_return_to', None)
+        request.session.save()
+        
+        # Build redirect URL with tokens
+        params = {
+            'access': access_token,
+            'role': user.role,
+            'full_name': full_name,
+        }
+        
+        from urllib.parse import urlencode
+        redirect_url = f"{return_to}?{urlencode(params)}"
+        
+        return HttpResponseRedirect(redirect_url)
+    
+    except PermissionDenied as e:
+        # School email validation failed
+        return_url = f"{return_to}?error={str(e)}"
+        return HttpResponseRedirect(return_url)
+    except Exception as e:
+        # Generic error handling
+        error_msg = f"Authentication failed: {str(e)}"
+        return_url = f"{return_to}?error={error_msg}"
+        return HttpResponseRedirect(return_url)
 
 
 # ================= AUTH: CUSTOM TOKEN VIEW =================
@@ -173,22 +359,25 @@ def _get_or_generate_certificate_pdf(cert):
 # ================= VERIFY (PUBLIC) =================
 @api_view(['GET'])
 @permission_classes([AllowAny])
+@xframe_options_exempt
 def verify_certificate(request, certificate_id):
+    
+    # 1. Kunin ang certificate o mag-return ng 404
     cert = get_object_or_404(Certificate, certificate_id=certificate_id)
 
+    # 2. Integrity Check (Hashing)
     data_string = cert.get_data_string()
-
     current_hash = hashlib.sha256(data_string.encode()).hexdigest()
 
     if cert.original_data_hash and current_hash != cert.original_data_hash:
         cert.status = "INVALID"
         cert.save(update_fields=['status'])
-
         return Response({
             "certificate_id": cert.certificate_id,
             "status": "INVALID - DATA TAMPERED"
-        })
+        }, status=status.HTTP_200_OK)
 
+    # 3. Signature Verification (EdDSA)
     is_valid = verify_signature(
         data_string,
         cert.signature,
@@ -198,14 +387,19 @@ def verify_certificate(request, certificate_id):
     if not is_valid:
         cert.status = "INVALID"
         cert.save(update_fields=['status'])
-
         return Response({
             "certificate_id": cert.certificate_id,
             "status": "INVALID - SIGNATURE FAIL"
-        })
+        }, status=status.HTTP_200_OK)
 
+    # 4. Success Logic
     cert.status = "VALID"
     cert.save(update_fields=['status'])
+
+    # Kunin ang absolute URL ng file para ma-access ng React
+    file_url = None
+    if cert.file:
+        file_url = request.build_absolute_uri(cert.file.url)
 
     return Response({
         "certificate_id": cert.certificate_id,
@@ -213,7 +407,8 @@ def verify_certificate(request, certificate_id):
         "course": cert.course,
         "issued_by": cert.issued_by,
         "date_issued": cert.date_issued,
-        "status": cert.status
+        "status": cert.status,
+        "file_url": file_url  # Importante ito para sa preview
     })
 
 # ================= USER MANAGEMENT (ADMIN ONLY) =================
