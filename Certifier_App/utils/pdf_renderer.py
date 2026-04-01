@@ -85,14 +85,21 @@ def _load_background_reader(template):
         if reader is None:
             background_url = getattr(background_file, 'url', '')
             if background_url and urlparse(background_url).scheme in {'http', 'https'}:
-                response = requests.get(background_url, timeout=15)
-                response.raise_for_status()
-                reader = ImageReader(BytesIO(response.content))
+                try:
+                    response = requests.get(background_url, timeout=15)
+                    response.raise_for_status()
+                    reader = ImageReader(BytesIO(response.content))
+                except requests.RequestException as req_err:
+                    print(f"BACKGROUND FETCH ERROR: {req_err}")
+                    # Fall through to next method
 
         # Storage backends can also provide a file-like object.
         if reader is None:
-            with background_file.open('rb') as image_fp:
-                reader = ImageReader(BytesIO(image_fp.read()))
+            try:
+                with background_file.open('rb') as image_fp:
+                    reader = ImageReader(BytesIO(image_fp.read()))
+            except Exception as file_err:
+                print(f"BACKGROUND OPEN ERROR: {file_err}")
 
         if reader is None:
             return None, None, None
@@ -102,7 +109,7 @@ def _load_background_reader(template):
         return reader, width, height
 
     except Exception as e:
-        print("BACKGROUND LOAD ERROR:", e)
+        print(f"BACKGROUND LOAD ERROR: {e}")
         return None, None, None
 
 def build_certificate_pdf_bytes(cert):

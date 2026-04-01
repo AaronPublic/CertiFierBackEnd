@@ -526,6 +526,26 @@ def process_bulk_upload(request, pk):
             decoded = file.read().decode('utf-8').splitlines()
             reader = list(csv.DictReader(decoded))  # Convert to list to count rows
 
+        if not reader:
+            upload.status = "FAILED"
+            upload.save(update_fields=['status'])
+            return Response({"error": "CSV file is empty"}, status=400)
+
+        # Validate required columns exist
+        required_cols = {'title', 'full_name', 'course', 'issued_by', 'date_issued'}
+        if not reader[0]:
+            upload.status = "FAILED"
+            upload.save(update_fields=['status'])
+            return Response({"error": "CSV has no header row"}, status=400)
+
+        missing_cols = required_cols - set(reader[0].keys())
+        if missing_cols:
+            upload.status = "FAILED"
+            upload.save(update_fields=['status'])
+            return Response({
+                "error": f"CSV missing required columns: {', '.join(sorted(missing_cols))}"
+            }, status=400)
+
         upload.status = "PROCESSING"
         upload.total_records = len(reader)
         upload.processed_records = 0
@@ -533,31 +553,45 @@ def process_bulk_upload(request, pk):
 
         created = []
 
-        for row in reader:
-            user = request.user  
+        for idx, row in enumerate(reader, start=1):
+            try:
+                user = request.user  
 
-            cert = Certificate.objects.create(
-                template=upload.template,
-                title=row['title'],
-                full_name=row['full_name'],
-                course=row['course'],
-                issued_by=row['issued_by'],
-                date_issued=row['date_issued'],
-                created_by=user,
-                owner=user
-            )
+                cert = Certificate.objects.create(
+                    template=upload.template,
+                    title=str(row.get('title', '')).strip(),
+                    full_name=str(row.get('full_name', '')).strip(),
+                    course=str(row.get('course', '')).strip(),
+                    issued_by=str(row.get('issued_by', '')).strip(),
+                    date_issued=row.get('date_issued'),
+                    created_by=user,
+                    owner=user
+                )
 
-            # EdDSA signing and hash
-            data_string = cert.get_data_string()
-            cert.data_hash = hashlib.sha256(data_string.encode()).hexdigest()
-            cert.original_data_hash = cert.data_hash
-            cert.signature = sign_data(data_string)
-            cert.public_key = VERIFY_KEY.encode().hex()
-            cert.save()
+                # EdDSA signing and hash
+                data_string = cert.get_data_string()
+                cert.data_hash = hashlib.sha256(data_string.encode()).hexdigest()
+                cert.original_data_hash = cert.data_hash
+                cert.signature = sign_data(data_string)
+                cert.public_key = VERIFY_KEY.encode().hex()
+                cert.save()
 
-            generate_and_attach_certificate_pdf(cert)
+                # PDF generation with error catching
+                try:
+                    generate_and_attach_certificate_pdf(cert)
+                except Exception as pdf_error:
+                    print(f"PDF generation failed for row {idx}: {str(pdf_error)}")
+                    # Continue processing even if PDF fails; cert is saved
 
-            created.append(cert.certificate_id)
+                created.append(cert.certificate_id)
+
+            except Exception as row_error:
+                print(f"Row {idx} failed: {str(row_error)}")
+                upload.status = "FAILED"
+                upload.save(update_fields=['status'])
+                return Response({
+                    "error": f"Error processing row {idx}: {str(row_error)}"
+                }, status=400)
 
             # Update processed_records dynamically
             upload.processed_records += 1
@@ -567,10 +601,10 @@ def process_bulk_upload(request, pk):
         upload.status = "COMPLETED"
         upload.save(update_fields=['status'])
 
-        return Response({"created": created})
+        return Response({"created": created, "total": len(created)})
 
     except Exception as e:
-        # Mark upload as failed in case of error
+        print(f"Bulk upload failed: {str(e)}")
         upload.status = "FAILED"
         upload.save(update_fields=['status'])
-        return Response({"error": str(e)}, status=500)
+        return Response({"error": f"Upload processing failed: {str(e)}"}, status=500)
