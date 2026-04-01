@@ -61,6 +61,17 @@ CSRF_TRUSTED_ORIGINS = [
 AUTH_USER_MODEL = 'Certifier_App.User'
 
 #TRY ONLY
+# I-overwrite nito ang local storage mo
+CLOUDINARY_STORAGE = {
+    'CLOUD_NAME': os.getenv('CLOUDINARY_CLOUD_NAME'),
+    'API_KEY': os.getenv('CLOUDINARY_API_KEY'),
+    'API_SECRET': os.getenv('CLOUDINARY_API_SECRET'),
+}
+
+# Ito ang "Magic" line na maglilipat ng files sa cloud
+DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
+
+# Mananatili ito pero hindi na sa local folder lang titingin ang Django
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
@@ -78,6 +89,8 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'corsheaders',
+    'cloudinary_storage',  
+    'cloudinary',          
 ]
 
 REST_FRAMEWORK = {
