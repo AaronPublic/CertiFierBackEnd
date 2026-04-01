@@ -2,6 +2,8 @@ from django.db import models
 from django.conf import settings
 import uuid
 from django.contrib.auth.models import AbstractUser
+from cloudinary.models import CloudinaryField
+
 
 
 # ================= USER ========================================================
@@ -18,7 +20,16 @@ class User(AbstractUser):
     def __str__(self):
         return self.username
 
+#====================try
+class Template(models.Model):
+    name = models.CharField(max_length=255)
 
+    # 🔥 USE THIS (BEST)
+    background = CloudinaryField('image')
+
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
 # ================= TEMPLATE =====================================================
 class Template(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
