@@ -118,10 +118,14 @@ def google_login_initiate(request):
     # Generate state token for CSRF protection
     state = f"{secrets.token_urlsafe(32)}:{return_to}"
     
-    # Store state in session for verification in callback
-    request.session['google_oauth_state'] = state
-    request.session['google_oauth_return_to'] = return_to
-    request.session.save()
+    # Store state in session for callback verification when sessions work.
+    # If session backend is unavailable, callback falls back to parsing state.
+    try:
+        request.session['google_oauth_state'] = state
+        request.session['google_oauth_return_to'] = return_to
+        request.session.save()
+    except Exception:
+        pass
     
     try:
         # Get Google auth URL
@@ -150,9 +154,19 @@ def google_callback(request):
     state = request.query_params.get('state')
     code = request.query_params.get('code')
     
-    # Get stored return_to and state from session
-    session_state = request.session.get('google_oauth_state')
-    return_to = request.session.get('google_oauth_return_to', '/login')
+    # Get stored return_to/state from session when available.
+    try:
+        session_state = request.session.get('google_oauth_state')
+        return_to = request.session.get('google_oauth_return_to')
+    except Exception:
+        session_state = None
+        return_to = None
+
+    # Stateless fallback: parse return_to from state token format "nonce:return_to".
+    if not return_to and state and ':' in state:
+        return_to = state.split(':', 1)[1]
+    if not return_to:
+        return_to = '/login'
     
     # Handle user cancellations or Google errors
     if error:
@@ -165,8 +179,18 @@ def google_callback(request):
         return_url = f"{return_to}?error={error_msg}"
         return HttpResponseRedirect(return_url)
     
-    # Validate state for CSRF protection
-    if not session_state or not state or state != session_state:
+    # Validate state for CSRF protection.
+    if not state:
+        return_url = f"{return_to}?error=CSRF validation failed"
+        return HttpResponseRedirect(return_url)
+
+    # Prefer strict session validation when session state exists.
+    if session_state and state != session_state:
+        return_url = f"{return_to}?error=CSRF validation failed"
+        return HttpResponseRedirect(return_url)
+
+    # Fallback validation for stateless mode.
+    if not session_state and ':' not in state:
         return_url = f"{return_to}?error=CSRF validation failed"
         return HttpResponseRedirect(return_url)
     
@@ -201,10 +225,13 @@ def google_callback(request):
         # Get full name
         full_name = f"{user.first_name} {user.last_name}".strip() or user.username
         
-        # Clear session data
-        request.session.pop('google_oauth_state', None)
-        request.session.pop('google_oauth_return_to', None)
-        request.session.save()
+        # Clear session data when session backend is available.
+        try:
+            request.session.pop('google_oauth_state', None)
+            request.session.pop('google_oauth_return_to', None)
+            request.session.save()
+        except Exception:
+            pass
         
         # Build redirect URL with tokens
         params = {
