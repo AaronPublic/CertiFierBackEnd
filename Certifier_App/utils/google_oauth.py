@@ -8,7 +8,7 @@ from urllib.parse import urlencode, parse_qs, urlparse
 from django.conf import settings
 from google.auth.transport.requests import Request
 from google.oauth2 import id_token
-
+from urllib.parse import quote
 
 GOOGLE_OAUTH_CLIENT_ID = getattr(settings, 'GOOGLE_OAUTH_CLIENT_ID', os.getenv('GOOGLE_OAUTH_CLIENT_ID'))
 GOOGLE_OAUTH_CLIENT_SECRET = getattr(settings, 'GOOGLE_OAUTH_CLIENT_SECRET', os.getenv('GOOGLE_OAUTH_CLIENT_SECRET'))
@@ -40,44 +40,49 @@ def _first_nonempty(values):
     return ''
 
 
+def _normalize_key(key):
+    return ''.join(ch for ch in str(key).lower() if ch.isalnum())
+
+
+def _env_by_aliases(*aliases):
+    normalized_aliases = {_normalize_key(alias) for alias in aliases}
+    for key, value in os.environ.items():
+        if _normalize_key(key) in normalized_aliases:
+            cleaned = _clean_env(value)
+            if cleaned:
+                return cleaned
+    return ''
+
+
 def _get_oauth_config():
     # Prefer Django settings, then process env, then common alternate env names.
     client_id = _first_nonempty([
         getattr(settings, 'GOOGLE_OAUTH_CLIENT_ID', None),
         os.getenv('GOOGLE_OAUTH_CLIENT_ID'),
         os.getenv('GOOGLE_CLIENT_ID'),
+        _env_by_aliases('GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_CLIENT_ID', 'GOOGLECLIENTID'),
     ])
     client_secret = _first_nonempty([
         getattr(settings, 'GOOGLE_OAUTH_CLIENT_SECRET', None),
         os.getenv('GOOGLE_OAUTH_CLIENT_SECRET'),
         os.getenv('GOOGLE_CLIENT_SECRET'),
+        _env_by_aliases('GOOGLE_OAUTH_CLIENT_SECRET', 'GOOGLE_CLIENT_SECRET', 'GOOGLECLIENTSECRET'),
     ])
     redirect_uri = _first_nonempty([
         getattr(settings, 'GOOGLE_OAUTH_REDIRECT_URI', None),
         os.getenv('GOOGLE_OAUTH_REDIRECT_URI'),
         os.getenv('GOOGLE_REDIRECT_URI'),
+        _env_by_aliases('GOOGLE_OAUTH_REDIRECT_URI', 'GOOGLE_REDIRECT_URI', 'GOOGLEREDIRECTURI'),
         'https://certifierbackend.onrender.com/api/auth/google/callback/',
     ])
     return client_id, client_secret, redirect_uri
 
 
-def get_google_auth_url(state, return_to=None, hd='ua.edu.ph'):
-    """
-    Generate Google OAuth authorization URL
-    
-    Args:
-        state: CSRF token for security
-        return_to: Redirect URI after auth (stored in state or session)
-        hd: Hosted domain restriction (e.g., ua.edu.ph for school accounts)
-    
-    Returns:
-        Authorization URL string
-    """
+def get_google_auth_url(state, hd='ua.edu.ph'):
     client_id, _, redirect_uri = _get_oauth_config()
+
     if not client_id:
-        raise ValueError('Google OAuth is not configured: GOOGLE_OAUTH_CLIENT_ID is missing.')
-    if not redirect_uri:
-        raise ValueError('Google OAuth is not configured: GOOGLE_OAUTH_REDIRECT_URI is missing.')
+        raise ValueError("Missing GOOGLE_OAUTH_CLIENT_ID")
 
     params = {
         'client_id': client_id,
@@ -85,9 +90,11 @@ def get_google_auth_url(state, return_to=None, hd='ua.edu.ph'):
         'response_type': 'code',
         'scope': 'openid email profile',
         'state': state,
-        'hd': hd,  # Restrict to school domain
+        'hd': hd,
         'access_type': 'offline',
+        'prompt': 'consent',  # ✅ important
     }
+
     return f"{GOOGLE_OAUTH_AUTH_URL}?{urlencode(params)}"
 
 
