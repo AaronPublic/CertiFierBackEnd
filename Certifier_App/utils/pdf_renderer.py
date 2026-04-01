@@ -1,5 +1,6 @@
 from io import BytesIO
 from datetime import date, datetime
+from urllib.parse import urlparse
 
 from django.core.files.base import ContentFile
 from reportlab.lib import colors
@@ -7,6 +8,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import landscape
+import requests
 
 
 def _clamp_pct(value, default=50.0):
@@ -71,8 +73,29 @@ def _load_background_reader(template):
         return None, None, None
 
     try:
-        image_path = template.background.path  # IMPORTANT
-        reader = ImageReader(image_path)
+        background_file = template.background
+        reader = None
+
+        # Local/dev storages usually expose a filesystem path.
+        image_path = getattr(background_file, 'path', None)
+        if image_path:
+            reader = ImageReader(image_path)
+
+        # Cloud storages (e.g., Cloudinary) may only expose a remote URL.
+        if reader is None:
+            background_url = getattr(background_file, 'url', '')
+            if background_url and urlparse(background_url).scheme in {'http', 'https'}:
+                response = requests.get(background_url, timeout=15)
+                response.raise_for_status()
+                reader = ImageReader(BytesIO(response.content))
+
+        # Storage backends can also provide a file-like object.
+        if reader is None:
+            with background_file.open('rb') as image_fp:
+                reader = ImageReader(BytesIO(image_fp.read()))
+
+        if reader is None:
+            return None, None, None
 
         width, height = reader.getSize()
 

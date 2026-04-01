@@ -1,5 +1,6 @@
 import hashlib
 import json
+from urllib.parse import urlparse
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import get_user_model
@@ -59,10 +60,18 @@ class TemplateSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['id', 'created_by', 'created_at']
 
+    def _secure_url(self, url):
+        if not url:
+            return None
+        parsed = urlparse(url)
+        if parsed.scheme == 'http':
+            return url.replace('http://', 'https://', 1)
+        return url
+
     def get_background(self, obj):
         if obj.background:
             try:
-                return obj.background.url  # ✅ ALWAYS FULL URL
+                return self._secure_url(obj.background.url)
             except Exception:
                 return None
         return None
@@ -70,7 +79,7 @@ class TemplateSerializer(serializers.ModelSerializer):
     def get_signature_image(self, obj):
         if obj.signature_image:
             try:
-                return obj.signature_image.url
+                return self._secure_url(obj.signature_image.url)
             except Exception:
                 return None
         return None

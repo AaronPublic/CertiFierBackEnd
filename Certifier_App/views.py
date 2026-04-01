@@ -34,6 +34,7 @@ from django.contrib.auth import get_user_model
 from .serializers import UserSerializer, CustomTokenObtainPairSerializer
 from django.views.decorators.clickjacking import xframe_options_exempt
 import secrets
+from rest_framework.parsers import MultiPartParser, FormParser
 
 User = get_user_model()
 
@@ -458,6 +459,7 @@ def preview_certificate(request, pk):
 
     return FileResponse(
         file_obj,
+        content_type='application/pdf',
         as_attachment=False,
         filename=f"{cert.certificate_id}.pdf"
     )
@@ -468,6 +470,7 @@ class TemplateView(generics.ListCreateAPIView):
     queryset = Template.objects.all()
     serializer_class = TemplateSerializer
     permission_classes = [AllowAny]
+    parser_classes = [MultiPartParser, FormParser]
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
