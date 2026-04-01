@@ -234,15 +234,9 @@ def google_callback(request):
         from urllib.parse import urlencode
         encoded_params = urlencode(params)
 
-        parsed_return_to = urlparse(return_to)
-        # Render static deployments may 404 on deep links like /login.
-        # Use hash-route fallback so the frontend app bootstraps at '/'.
-        if parsed_return_to.scheme and parsed_return_to.netloc and parsed_return_to.path not in ('', '/'):
-            hash_path = parsed_return_to.path.lstrip('/')
-            redirect_url = f"{parsed_return_to.scheme}://{parsed_return_to.netloc}/#/{hash_path}?{encoded_params}"
-        else:
-            separator = '&' if '?' in return_to else '?'
-            redirect_url = f"{return_to}{separator}{encoded_params}"
+        # Preserve frontend router format exactly as provided in return_to.
+        separator = '&' if '?' in return_to else '?'
+        redirect_url = f"{return_to}{separator}{encoded_params}"
         
         return HttpResponseRedirect(redirect_url)
     
