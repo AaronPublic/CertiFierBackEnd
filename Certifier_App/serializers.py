@@ -183,8 +183,10 @@ class BulkUploadCreateSerializer(serializers.ModelSerializer):
         user = request.user
 
         validated_data.pop('uploaded_by', None)
-
-        return BulkUpload.objects.create(
-            uploaded_by=user,
-            **validated_data
-        )
+        try:
+            return BulkUpload.objects.create(
+                uploaded_by=user,
+                **validated_data
+            )
+        except Exception as exc:
+            raise serializers.ValidationError({'csv_file': str(exc)}) from exc

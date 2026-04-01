@@ -1,12 +1,17 @@
 from django.db import models
 from django.conf import settings
 import uuid
+from pathlib import Path
 from django.contrib.auth.models import AbstractUser
+from django.core.files.storage import FileSystemStorage
 from cloudinary.models import CloudinaryField
 
 
 
 # ================= USER ========================================================
+csv_upload_storage = FileSystemStorage(location=str(Path(settings.BASE_DIR) / 'csv_uploads'))
+
+
 class User(AbstractUser):
     email = models.EmailField(unique=True)
     role = models.CharField(max_length=20, choices=[
@@ -105,7 +110,8 @@ class BulkUpload(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
-    csv_file = models.FileField(upload_to='csv_uploads/')
+    # Keep CSV ingestion local to avoid Cloudinary raw upload issues.
+    csv_file = models.FileField(upload_to='csv_uploads/', storage=csv_upload_storage)
 
     # Link to template (IMPORTANT)
     template = models.ForeignKey(Template, on_delete=models.CASCADE)
