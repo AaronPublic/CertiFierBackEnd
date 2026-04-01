@@ -1,6 +1,7 @@
 import csv
 import hashlib
 import uuid
+from urllib.parse import urlparse
 from django.http import FileResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
@@ -37,6 +38,17 @@ import secrets
 from rest_framework.parsers import MultiPartParser, FormParser
 
 User = get_user_model()
+
+
+# ================= UTILITY HELPERS =================
+def _secure_url(url):
+    """Normalize URL to HTTPS for production/iframe safety."""
+    if not url:
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme == 'http':
+        return url.replace('http://', 'https://', 1)
+    return url
 
 
 # ================= GOOGLE OAUTH HELPERS =================
@@ -400,7 +412,7 @@ def verify_certificate(request, certificate_id):
     # Kunin ang absolute URL ng file para ma-access ng React
     file_url = None
     if cert.file:
-        file_url = request.build_absolute_uri(cert.file.url)
+        file_url = _secure_url(request.build_absolute_uri(cert.file.url))
 
     return Response({
         "certificate_id": cert.certificate_id,
@@ -441,6 +453,7 @@ def download_certificate(request, pk):
 
     return FileResponse(
         file_obj,
+        content_type='application/pdf',
         as_attachment=True,
         filename=f"{cert.certificate_id}.pdf"
     )
