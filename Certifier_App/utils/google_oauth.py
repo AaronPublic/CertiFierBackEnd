@@ -45,9 +45,9 @@ def _normalize_key(key):
 
 
 def _env_by_aliases(*aliases):
-    normalized_aliases = {_normalize_key(alias) for alias in aliases}
+    alias_set = {_normalize_key(alias) for alias in aliases}
     for key, value in os.environ.items():
-        if _normalize_key(key) in normalized_aliases:
+        if _normalize_key(key) in alias_set:
             cleaned = _clean_env(value)
             if cleaned:
                 return cleaned
