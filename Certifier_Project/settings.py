@@ -70,7 +70,6 @@ CLOUDINARY_STORAGE = {
 
 # Ito ang "Magic" line na maglilipat ng files sa cloud
 DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
-
 # Mananatili ito pero hindi na sa local folder lang titingin ang Django
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')

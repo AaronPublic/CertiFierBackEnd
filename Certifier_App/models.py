@@ -19,16 +19,6 @@ class User(AbstractUser):
 
     def __str__(self):
         return self.username
-
-#====================try
-class Template(models.Model):
-    name = models.CharField(max_length=255)
-
-    # 🔥 USE THIS (BEST)
-    background = CloudinaryField('image')
-
-    created_by = models.ForeignKey(User, on_delete=models.CASCADE)
-    created_at = models.DateTimeField(auto_now_add=True)
     
 # ================= TEMPLATE =====================================================
 class Template(models.Model):
@@ -36,13 +26,8 @@ class Template(models.Model):
 
     name = models.CharField(max_length=255)
 
-    background = models.FileField(upload_to='templates/')
-
-    signature_image = models.ImageField(
-        upload_to='templates/signatures/',
-        null=True,
-        blank=True
-    )
+    background = CloudinaryField('image')  # ✅ FIX
+    signature_image = CloudinaryField('image', null=True, blank=True)
 
     placeholders = models.JSONField()
 
