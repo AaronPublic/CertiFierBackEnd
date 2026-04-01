@@ -123,9 +123,12 @@ def google_login_initiate(request):
     request.session['google_oauth_return_to'] = return_to
     request.session.save()
     
-    # Get Google auth URL
-    google_auth_url = get_google_auth_url(state, return_to, hd)
-    
+    try:
+        # Get Google auth URL
+        google_auth_url = get_google_auth_url(state, return_to, hd)
+    except ValueError as exc:
+        return Response({'error': str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     return HttpResponseRedirect(google_auth_url)
 
 

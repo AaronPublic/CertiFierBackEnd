@@ -21,6 +21,22 @@ GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v1/userinfo'
 
 
+def _clean_env(value):
+    if value is None:
+        return ''
+    cleaned = str(value).strip()
+    if cleaned.lower() in {'none', 'null', ''}:
+        return ''
+    return cleaned
+
+
+def _get_oauth_config():
+    client_id = _clean_env(GOOGLE_OAUTH_CLIENT_ID)
+    client_secret = _clean_env(GOOGLE_OAUTH_CLIENT_SECRET)
+    redirect_uri = _clean_env(GOOGLE_OAUTH_REDIRECT_URI)
+    return client_id, client_secret, redirect_uri
+
+
 def get_google_auth_url(state, return_to=None, hd='ua.edu.ph'):
     """
     Generate Google OAuth authorization URL
@@ -33,9 +49,15 @@ def get_google_auth_url(state, return_to=None, hd='ua.edu.ph'):
     Returns:
         Authorization URL string
     """
+    client_id, _, redirect_uri = _get_oauth_config()
+    if not client_id:
+        raise ValueError('Google OAuth is not configured: GOOGLE_OAUTH_CLIENT_ID is missing.')
+    if not redirect_uri:
+        raise ValueError('Google OAuth is not configured: GOOGLE_OAUTH_REDIRECT_URI is missing.')
+
     params = {
-        'client_id': GOOGLE_OAUTH_CLIENT_ID,
-        'redirect_uri': GOOGLE_OAUTH_REDIRECT_URI,
+        'client_id': client_id,
+        'redirect_uri': redirect_uri,
         'response_type': 'code',
         'scope': 'openid email profile',
         'state': state,
@@ -55,12 +77,20 @@ def exchange_code_for_token(code):
     Returns:
         Dictionary with access_token, id_token, etc.
     """
+    client_id, client_secret, redirect_uri = _get_oauth_config()
+    if not client_id:
+        raise ValueError('Google OAuth is not configured: GOOGLE_OAUTH_CLIENT_ID is missing.')
+    if not client_secret:
+        raise ValueError('Google OAuth is not configured: GOOGLE_OAUTH_CLIENT_SECRET is missing.')
+    if not redirect_uri:
+        raise ValueError('Google OAuth is not configured: GOOGLE_OAUTH_REDIRECT_URI is missing.')
+
     payload = {
-        'client_id': GOOGLE_OAUTH_CLIENT_ID,
-        'client_secret': GOOGLE_OAUTH_CLIENT_SECRET,
+        'client_id': client_id,
+        'client_secret': client_secret,
         'code': code,
         'grant_type': 'authorization_code',
-        'redirect_uri': GOOGLE_OAUTH_REDIRECT_URI,
+        'redirect_uri': redirect_uri,
     }
     
     response = requests.post(GOOGLE_TOKEN_URL, data=payload)
@@ -79,11 +109,15 @@ def get_user_info_from_id_token(id_token_str):
         Dictionary with user info (email, name, picture, etc.)
     """
     try:
+        client_id, _, _ = _get_oauth_config()
+        if not client_id:
+            raise ValueError('Google OAuth is not configured: GOOGLE_OAUTH_CLIENT_ID is missing.')
+
         # Verify and decode the ID token
         idinfo = id_token.verify_oauth2_token(
             id_token_str,
             Request(),
-            GOOGLE_OAUTH_CLIENT_ID
+            client_id
         )
         
         # Verify hosted domain
