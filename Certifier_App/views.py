@@ -467,7 +467,7 @@ def preview_certificate(request, pk):
 class TemplateView(generics.ListCreateAPIView):
     queryset = Template.objects.all()
     serializer_class = TemplateSerializer
-    permission_classes = [IsAdminUserRole]
+    permission_classes = [AllowAny]
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
