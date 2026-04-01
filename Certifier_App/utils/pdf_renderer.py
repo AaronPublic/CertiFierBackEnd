@@ -84,7 +84,11 @@ def _load_background_reader(template):
         # Cloud storages (e.g., Cloudinary) may only expose a remote URL.
         if reader is None:
             background_url = getattr(background_file, 'url', '')
-            if background_url and urlparse(background_url).scheme in {'http', 'https'}:
+            if background_url and background_url.startswith('//'):
+                background_url = f"https:{background_url}"
+
+            parsed_url = urlparse(background_url) if background_url else None
+            if background_url and parsed_url and parsed_url.scheme in {'http', 'https'}:
                 try:
                     response = requests.get(background_url, timeout=15)
                     response.raise_for_status()
