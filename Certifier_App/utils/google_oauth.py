@@ -32,10 +32,32 @@ def _clean_env(value):
     return cleaned
 
 
+def _first_nonempty(values):
+    for value in values:
+        cleaned = _clean_env(value)
+        if cleaned:
+            return cleaned
+    return ''
+
+
 def _get_oauth_config():
-    client_id = _clean_env(GOOGLE_OAUTH_CLIENT_ID)
-    client_secret = _clean_env(GOOGLE_OAUTH_CLIENT_SECRET)
-    redirect_uri = _clean_env(GOOGLE_OAUTH_REDIRECT_URI)
+    # Prefer Django settings, then process env, then common alternate env names.
+    client_id = _first_nonempty([
+        getattr(settings, 'GOOGLE_OAUTH_CLIENT_ID', None),
+        os.getenv('GOOGLE_OAUTH_CLIENT_ID'),
+        os.getenv('GOOGLE_CLIENT_ID'),
+    ])
+    client_secret = _first_nonempty([
+        getattr(settings, 'GOOGLE_OAUTH_CLIENT_SECRET', None),
+        os.getenv('GOOGLE_OAUTH_CLIENT_SECRET'),
+        os.getenv('GOOGLE_CLIENT_SECRET'),
+    ])
+    redirect_uri = _first_nonempty([
+        getattr(settings, 'GOOGLE_OAUTH_REDIRECT_URI', None),
+        os.getenv('GOOGLE_OAUTH_REDIRECT_URI'),
+        os.getenv('GOOGLE_REDIRECT_URI'),
+        'https://certifierbackend.onrender.com/api/auth/google/callback/',
+    ])
     return client_id, client_secret, redirect_uri
 
 
