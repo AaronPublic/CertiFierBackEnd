@@ -51,42 +51,29 @@ class UserSerializer(serializers.ModelSerializer):
 # ================= TEMPLATE =================
 class TemplateSerializer(serializers.ModelSerializer):
     placeholders = serializers.JSONField(required=False)
+    background = serializers.SerializerMethodField()
+    signature_image = serializers.SerializerMethodField()
 
     class Meta:
         model = Template
         fields = '__all__'
         read_only_fields = ['id', 'created_by', 'created_at']
 
-    def validate_placeholders(self, value):
-        # Normalize empty values so template upload does not fail with server errors.
-        if value in (None, ''):
-            return {'markers': []}
-
-        if isinstance(value, str):
+    def get_background(self, obj):
+        if obj.background:
             try:
-                value = json.loads(value)
-            except json.JSONDecodeError as exc:
-                raise serializers.ValidationError('placeholders must be valid JSON.') from exc
+                return obj.background.url  # ✅ ALWAYS FULL URL
+            except Exception:
+                return None
+        return None
 
-        if not isinstance(value, dict):
-            raise serializers.ValidationError('placeholders must be a JSON object.')
-
-        markers = value.get('markers', [])
-        if markers is None:
-            value['markers'] = []
-        elif not isinstance(markers, list):
-            raise serializers.ValidationError("placeholders.markers must be a list.")
-
-        return value
-
-    def create(self, validated_data):
-        validated_data.setdefault('placeholders', {'markers': []})
-        return super().create(validated_data)
-
-    def update(self, instance, validated_data):
-        if 'placeholders' in validated_data and validated_data['placeholders'] in (None, ''):
-            validated_data['placeholders'] = {'markers': []}
-        return super().update(instance, validated_data)
+    def get_signature_image(self, obj):
+        if obj.signature_image:
+            try:
+                return obj.signature_image.url
+            except Exception:
+                return None
+        return None
 
 
 # ================= CERTIFICATE =================
