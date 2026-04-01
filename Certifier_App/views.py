@@ -470,7 +470,7 @@ def preview_certificate(request, pk):
 class TemplateView(generics.ListCreateAPIView):
     queryset = Template.objects.all()
     serializer_class = TemplateSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
 
     def perform_create(self, serializer):
