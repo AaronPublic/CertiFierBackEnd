@@ -81,11 +81,19 @@ def _draw_default_layout(pdf, cert):
 
 
 def _load_background_reader(template):
-    if not (template and template.background and template.background.name):
+    if not (template and getattr(template, 'background', None)):
+        return None, None, None
+
+    background_file = template.background
+    has_any_ref = any([
+        bool(getattr(background_file, 'name', None)),
+        bool(getattr(background_file, 'public_id', None)),
+        bool(getattr(background_file, 'url', None)),
+    ])
+    if not has_any_ref:
         return None, None, None
 
     try:
-        background_file = template.background
         reader = None
 
         # Local/dev storages usually expose a filesystem path.
