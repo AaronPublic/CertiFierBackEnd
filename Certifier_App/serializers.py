@@ -52,8 +52,8 @@ class UserSerializer(serializers.ModelSerializer):
 # ================= TEMPLATE =================
 class TemplateSerializer(serializers.ModelSerializer):
     placeholders = serializers.JSONField(required=False)
-    background = serializers.SerializerMethodField()
-    signature_image = serializers.SerializerMethodField()
+    background = serializers.ImageField(required=False, allow_null=True)
+    signature_image = serializers.ImageField(required=False, allow_null=True)
 
     class Meta:
         model = Template
@@ -68,21 +68,11 @@ class TemplateSerializer(serializers.ModelSerializer):
             return url.replace('http://', 'https://', 1)
         return url
 
-    def get_background(self, obj):
-        if obj.background:
-            try:
-                return self._secure_url(obj.background.url)
-            except Exception:
-                return None
-        return None
-
-    def get_signature_image(self, obj):
-        if obj.signature_image:
-            try:
-                return self._secure_url(obj.signature_image.url)
-            except Exception:
-                return None
-        return None
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['background'] = self._secure_url(data.get('background'))
+        data['signature_image'] = self._secure_url(data.get('signature_image'))
+        return data
 
 
 # ================= CERTIFICATE =================
