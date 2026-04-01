@@ -11,6 +11,17 @@ from reportlab.lib.pagesizes import landscape
 import requests
 
 
+def _cloudinary_png_url(url):
+    """Force Cloudinary image delivery as PNG for ReportLab compatibility."""
+    if not isinstance(url, str):
+        return url
+    if 'res.cloudinary.com' not in url or '/image/upload/' not in url:
+        return url
+    if '/image/upload/f_png/' in url:
+        return url
+    return url.replace('/image/upload/', '/image/upload/f_png/', 1)
+
+
 def _clamp_pct(value, default=50.0):
     try:
         pct = float(value)
@@ -86,6 +97,8 @@ def _load_background_reader(template):
             background_url = getattr(background_file, 'url', '')
             if background_url and background_url.startswith('//'):
                 background_url = f"https:{background_url}"
+
+            background_url = _cloudinary_png_url(background_url)
 
             parsed_url = urlparse(background_url) if background_url else None
             if background_url and parsed_url and parsed_url.scheme in {'http', 'https'}:

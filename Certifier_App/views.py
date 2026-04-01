@@ -359,6 +359,15 @@ class CertificateDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 
 def _get_or_generate_certificate_pdf(cert):
+    # If the certificate has a visual template, regenerate to avoid serving
+    # previously cached plain fallback PDFs from older deployments.
+    if cert.template_id and cert.template and cert.template.background:
+        try:
+            generate_and_attach_certificate_pdf(cert)
+            return cert.file.open('rb')
+        except Exception:
+            pass
+
     if cert.file and cert.file.name:
         try:
             if cert.file.storage.exists(cert.file.name):
