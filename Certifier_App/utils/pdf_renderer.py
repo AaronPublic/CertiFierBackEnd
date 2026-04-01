@@ -9,6 +9,7 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import landscape
 import requests
+from PIL import Image
 
 
 def _cloudinary_png_url(url):
@@ -105,7 +106,8 @@ def _load_background_reader(template):
                 try:
                     response = requests.get(background_url, timeout=15)
                     response.raise_for_status()
-                    reader = ImageReader(BytesIO(response.content))
+                    image = Image.open(BytesIO(response.content)).convert('RGB')
+                    reader = ImageReader(image)
                 except requests.RequestException as req_err:
                     print(f"BACKGROUND FETCH ERROR: {req_err}")
                     # Fall through to next method
@@ -114,7 +116,8 @@ def _load_background_reader(template):
         if reader is None:
             try:
                 with background_file.open('rb') as image_fp:
-                    reader = ImageReader(BytesIO(image_fp.read()))
+                    image = Image.open(BytesIO(image_fp.read())).convert('RGB')
+                    reader = ImageReader(image)
             except Exception as file_err:
                 print(f"BACKGROUND OPEN ERROR: {file_err}")
 
