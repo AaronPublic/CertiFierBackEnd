@@ -10,6 +10,13 @@ from google.auth.transport.requests import Request
 from google.oauth2 import id_token
 from urllib.parse import quote
 
+GOOGLE_OAUTH_CLIENT_ID = getattr(settings, 'GOOGLE_OAUTH_CLIENT_ID', os.getenv('GOOGLE_OAUTH_CLIENT_ID'))
+GOOGLE_OAUTH_CLIENT_SECRET = getattr(settings, 'GOOGLE_OAUTH_CLIENT_SECRET', os.getenv('GOOGLE_OAUTH_CLIENT_SECRET'))
+GOOGLE_OAUTH_REDIRECT_URI = getattr(
+    settings,
+    'GOOGLE_OAUTH_REDIRECT_URI',
+    os.getenv('GOOGLE_OAUTH_REDIRECT_URI', 'https://certifierbackend.onrender.com/api/auth/google/callback/')
+)
 
 GOOGLE_OAUTH_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -19,7 +26,7 @@ GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v1/userinfo'
 def _clean_env(value):
     if value is None:
         return ''
-    cleaned = str(value).strip()
+    cleaned = str(value).strip().strip('"').strip("'")
     if cleaned.lower() in {'none', 'null', ''}:
         return ''
     return cleaned
