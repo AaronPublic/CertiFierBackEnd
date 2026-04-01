@@ -1,6 +1,7 @@
 import csv
 import hashlib
 import uuid
+import base64
 from io import BytesIO
 from urllib.parse import urlparse
 from django.http import FileResponse, HttpResponseRedirect
@@ -105,8 +106,9 @@ def google_login_initiate(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
-    # ✅ SAFE state (NO URL inside)
-    state = secrets.token_urlsafe(32)
+    # Encode return_to in state so callback can recover even if session is unavailable.
+    encoded_return_to = base64.urlsafe_b64encode(return_to.encode()).decode().rstrip('=')
+    state = f"{secrets.token_urlsafe(32)}:{encoded_return_to}"
 
     # ✅ Store in session ONLY
     try:
@@ -153,9 +155,14 @@ def google_callback(request):
         session_state = None
         return_to = None
 
-    # Stateless fallback: parse return_to from state token format "nonce:return_to".
+    # Stateless fallback: parse return_to from state token format "nonce:base64url(return_to)".
     if not return_to and state and ':' in state:
-        return_to = state.split(':', 1)[1]
+        encoded_part = state.split(':', 1)[1]
+        try:
+            padding = '=' * (-len(encoded_part) % 4)
+            return_to = base64.urlsafe_b64decode(f"{encoded_part}{padding}".encode()).decode()
+        except Exception:
+            return_to = None
     if not return_to:
         return_to = '/login'
     
