@@ -16,6 +16,7 @@ urlpatterns = [
     path('my-certificates/', views.MyCertificatesView.as_view()),
 
     path('verify/<str:certificate_id>/', views.verify_certificate),
+    path('verify/<str:certificate_id>/preview/', views.verify_certificate_preview, name='verify_certificate_preview'),
 
     path('certificates/<uuid:pk>/download/', views.download_certificate),
 

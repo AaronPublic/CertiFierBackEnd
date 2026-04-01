@@ -409,10 +409,12 @@ def verify_certificate(request, certificate_id):
     cert.status = "VALID"
     cert.save(update_fields=['status'])
 
-    # Kunin ang absolute URL ng file para ma-access ng React
-    file_url = None
-    if cert.file:
-        file_url = _secure_url(request.build_absolute_uri(cert.file.url))
+    # Always return a public preview endpoint URL for verify flows.
+    file_url = _secure_url(
+        request.build_absolute_uri(
+            reverse('verify_certificate_preview', args=[cert.certificate_id])
+        )
+    )
 
     return Response({
         "certificate_id": cert.certificate_id,
@@ -423,6 +425,22 @@ def verify_certificate(request, certificate_id):
         "status": cert.status,
         "file_url": file_url  # Importante ito para sa preview
     })
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+@xframe_options_exempt
+def verify_certificate_preview(request, certificate_id):
+    cert = get_object_or_404(Certificate, certificate_id=certificate_id)
+
+    file_obj = _get_or_generate_certificate_pdf(cert)
+
+    return FileResponse(
+        file_obj,
+        content_type='application/pdf',
+        as_attachment=False,
+        filename=f"{cert.certificate_id}.pdf"
+    )
 
 # ================= USER MANAGEMENT (ADMIN ONLY) =================
 
