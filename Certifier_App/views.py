@@ -449,6 +449,7 @@ def download_certificate(request, pk):
 # ================= CERTIFICATE PREVIEW =================
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@xframe_options_exempt
 def preview_certificate(request, pk):
     cert = get_object_or_404(Certificate, pk=pk)
 

@@ -126,6 +126,11 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
+# Respect reverse proxy headers on Render so request.is_secure() and
+# build_absolute_uri() generate HTTPS URLs.
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+USE_X_FORWARDED_HOST = True
+
 
 ROOT_URLCONF = 'Certifier_Project.urls'
 
