@@ -5,15 +5,17 @@ import os
 import json
 import requests
 from urllib.parse import urlencode, parse_qs, urlparse
+from django.conf import settings
 from google.auth.transport.requests import Request
 from google.oauth2 import id_token
 
 
-GOOGLE_OAUTH_CLIENT_ID = os.getenv('GOOGLE_OAUTH_CLIENT_ID')
-GOOGLE_OAUTH_CLIENT_SECRET = os.getenv('GOOGLE_OAUTH_CLIENT_SECRET')
-GOOGLE_OAUTH_REDIRECT_URI = os.getenv(
+GOOGLE_OAUTH_CLIENT_ID = getattr(settings, 'GOOGLE_OAUTH_CLIENT_ID', os.getenv('GOOGLE_OAUTH_CLIENT_ID'))
+GOOGLE_OAUTH_CLIENT_SECRET = getattr(settings, 'GOOGLE_OAUTH_CLIENT_SECRET', os.getenv('GOOGLE_OAUTH_CLIENT_SECRET'))
+GOOGLE_OAUTH_REDIRECT_URI = getattr(
+    settings,
     'GOOGLE_OAUTH_REDIRECT_URI',
-    'https://certifierbackend.onrender.com/api/auth/google/callback/'
+    os.getenv('GOOGLE_OAUTH_REDIRECT_URI', 'https://certifierbackend.onrender.com/api/auth/google/callback/')
 )
 
 GOOGLE_OAUTH_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
