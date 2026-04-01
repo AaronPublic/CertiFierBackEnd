@@ -438,16 +438,19 @@ def verify_certificate(request, certificate_id):
 @permission_classes([AllowAny])
 @xframe_options_exempt
 def verify_certificate_preview(request, certificate_id):
-    cert = get_object_or_404(Certificate, certificate_id=certificate_id)
+    try:
+        cert = get_object_or_404(Certificate, certificate_id=certificate_id)
 
-    file_obj = _get_or_generate_certificate_pdf(cert)
+        file_obj = _get_or_generate_certificate_pdf(cert)
 
-    return FileResponse(
-        file_obj,
-        content_type='application/pdf',
-        as_attachment=False,
-        filename=f"{cert.certificate_id}.pdf"
-    )
+        return FileResponse(
+            file_obj,
+            content_type='application/pdf',
+            as_attachment=False,
+            filename=f"{cert.certificate_id}.pdf"
+        )
+    except Exception as exc:
+        return Response({'error': f'Preview generation failed: {str(exc)}'}, status=500)
 
 # ================= USER MANAGEMENT (ADMIN ONLY) =================
 
@@ -469,19 +472,22 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def download_certificate(request, pk):
-    cert = get_object_or_404(Certificate, pk=pk)
+    try:
+        cert = get_object_or_404(Certificate, pk=pk)
 
-    if cert.owner != request.user and request.user.role != 'admin':
-        return Response({"error": "Unauthorized"}, status=403)
+        if cert.owner != request.user and request.user.role != 'admin':
+            return Response({"error": "Unauthorized"}, status=403)
 
-    file_obj = _get_or_generate_certificate_pdf(cert)
+        file_obj = _get_or_generate_certificate_pdf(cert)
 
-    return FileResponse(
-        file_obj,
-        content_type='application/pdf',
-        as_attachment=True,
-        filename=f"{cert.certificate_id}.pdf"
-    )
+        return FileResponse(
+            file_obj,
+            content_type='application/pdf',
+            as_attachment=True,
+            filename=f"{cert.certificate_id}.pdf"
+        )
+    except Exception as exc:
+        return Response({'error': f'Download failed: {str(exc)}'}, status=500)
 
 
 # ================= CERTIFICATE PREVIEW =================
@@ -489,19 +495,22 @@ def download_certificate(request, pk):
 @permission_classes([IsAuthenticated])
 @xframe_options_exempt
 def preview_certificate(request, pk):
-    cert = get_object_or_404(Certificate, pk=pk)
+    try:
+        cert = get_object_or_404(Certificate, pk=pk)
 
-    if cert.owner != request.user and request.user.role != 'admin':
-        return Response({"error": "Unauthorized"}, status=403)
+        if cert.owner != request.user and request.user.role != 'admin':
+            return Response({"error": "Unauthorized"}, status=403)
 
-    file_obj = _get_or_generate_certificate_pdf(cert)
+        file_obj = _get_or_generate_certificate_pdf(cert)
 
-    return FileResponse(
-        file_obj,
-        content_type='application/pdf',
-        as_attachment=False,
-        filename=f"{cert.certificate_id}.pdf"
-    )
+        return FileResponse(
+            file_obj,
+            content_type='application/pdf',
+            as_attachment=False,
+            filename=f"{cert.certificate_id}.pdf"
+        )
+    except Exception as exc:
+        return Response({'error': f'Preview failed: {str(exc)}'}, status=500)
 
 
 # ================= TEMPLATE =================

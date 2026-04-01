@@ -113,79 +113,96 @@ def _load_background_reader(template):
         return None, None, None
 
 def build_certificate_pdf_bytes(cert):
-    template = cert.template
-    markers = []
-    background_reader = None
-    page_width, page_height = letter
+    try:
+        template = cert.template
+        markers = []
+        background_reader = None
+        page_width, page_height = letter
 
-    bg_reader, bg_width, bg_height = _load_background_reader(template)
-    if bg_reader is not None and bg_width and bg_height:
-        background_reader = bg_reader
-        if bg_width > bg_height:
-            page_width, page_height = landscape((bg_width, bg_height))
+        bg_reader, bg_width, bg_height = _load_background_reader(template)
+        if bg_reader is not None and bg_width and bg_height:
+            background_reader = bg_reader
+            if bg_width > bg_height:
+                page_width, page_height = landscape((bg_width, bg_height))
+            else:
+                page_width, page_height = bg_width, bg_height
         else:
-            page_width, page_height = bg_width, bg_height
-    else:
-        page_width, page_height = letter  # fallback safety
+            page_width, page_height = letter
 
-    if template and isinstance(template.placeholders, dict):
-        raw_markers = template.placeholders.get('markers', [])
-        if isinstance(raw_markers, list):
-            markers = raw_markers
+        if template and isinstance(template.placeholders, dict):
+            raw_markers = template.placeholders.get('markers', [])
+            if isinstance(raw_markers, list):
+                markers = raw_markers
 
-    buffer = BytesIO()
-    pdf = canvas.Canvas(buffer, pagesize=(page_width, page_height))
+        buffer = BytesIO()
+        pdf = canvas.Canvas(buffer, pagesize=(page_width, page_height))
 
-    if background_reader is not None:
-        pdf.drawImage(
-            background_reader,
-            0,
-            0,
-            width=page_width,
-            height=page_height,
-            preserveAspectRatio=False,
-            mask='auto',
-        )
+        if background_reader is not None:
+            pdf.drawImage(
+                background_reader,
+                0,
+                0,
+                width=page_width,
+                height=page_height,
+                preserveAspectRatio=False,
+                mask='auto',
+            )
 
-    rendered_marker = False
+        rendered_marker = False
 
-    for marker in markers:
-        if not isinstance(marker, dict):
-            continue
+        for marker in markers:
+            if not isinstance(marker, dict):
+                continue
 
-        key = marker.get('key')
-        value = _certificate_field_value(cert, key)
-        if not value:
-            continue
+            key = marker.get('key')
+            value = _certificate_field_value(cert, key)
+            if not value:
+                continue
 
-        x_pct = _clamp_pct(marker.get('xPct'), default=50.0)
-        y_pct = _clamp_pct(marker.get('yPct'), default=50.0)
+            x_pct = _clamp_pct(marker.get('xPct'), default=50.0)
+            y_pct = _clamp_pct(marker.get('yPct'), default=50.0)
 
-        x = (x_pct / 100.0) * page_width
-        y = page_height - ((y_pct / 100.0) * page_height)
+            x = (x_pct / 100.0) * page_width
+            y = page_height - ((y_pct / 100.0) * page_height)
 
-        font_size = _parse_font_size(marker.get('fontSize'), default=24)
-        align = str(marker.get('align', 'left')).lower()
+            font_size = _parse_font_size(marker.get('fontSize'), default=24)
+            align = str(marker.get('align', 'left')).lower()
 
-        pdf.setFont('Helvetica', font_size)
-        pdf.setFillColor(_parse_color(marker.get('color')))
+            pdf.setFont('Helvetica', font_size)
+            pdf.setFillColor(_parse_color(marker.get('color')))
 
-        if align == 'center':
-            pdf.drawCentredString(x, y, value)
-        elif align == 'right':
-            pdf.drawRightString(x, y, value)
-        else:
-            pdf.drawString(x, y, value)
+            if align == 'center':
+                pdf.drawCentredString(x, y, value)
+            elif align == 'right':
+                pdf.drawRightString(x, y, value)
+            else:
+                pdf.drawString(x, y, value)
 
-        rendered_marker = True
+            rendered_marker = True
 
-    if not rendered_marker:
-        _draw_default_layout(pdf, cert)
+        if not rendered_marker:
+            _draw_default_layout(pdf, cert)
 
-    pdf.showPage()
-    pdf.save()
-    buffer.seek(0)
-    return buffer.getvalue()
+        pdf.showPage()
+        pdf.save()
+        buffer.seek(0)
+        return buffer.getvalue()
+
+    except Exception as err:
+        # Absolute fallback: always return a valid minimal PDF.
+        print(f"PDF RENDER ERROR: {err}")
+        fallback = BytesIO()
+        pdf = canvas.Canvas(fallback, pagesize=letter)
+        pdf.setFont('Helvetica-Bold', 16)
+        pdf.drawString(72, 760, 'Certificate Preview')
+        pdf.setFont('Helvetica', 12)
+        pdf.drawString(72, 730, f"Certificate ID: {getattr(cert, 'certificate_id', 'N/A')}")
+        pdf.drawString(72, 710, f"Name: {getattr(cert, 'full_name', 'N/A')}")
+        pdf.drawString(72, 690, f"Course: {getattr(cert, 'course', 'N/A')}")
+        pdf.showPage()
+        pdf.save()
+        fallback.seek(0)
+        return fallback.getvalue()
 
 
 def generate_and_attach_certificate_pdf(cert):
