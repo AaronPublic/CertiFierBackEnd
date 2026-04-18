@@ -15,8 +15,7 @@ urlpatterns = [
     # ================= STUDENT =================
     path('my-certificates/', views.MyCertificatesView.as_view()),
 
-    path('verify/<str:certificate_id>/', views.verify_certificate),
-    path('verify/<str:certificate_id>/preview/', views.verify_certificate_preview, name='verify_certificate_preview'),
+    path('verify/<str:certificate_id>/', views.verify_certificate, name='verify_certificate'),
 
     path('certificates/<uuid:pk>/download/', views.download_certificate),
 
@@ -26,6 +25,7 @@ urlpatterns = [
     path('certificates/create/', views.CertificateCreateView.as_view()),
     path('certificates/<uuid:pk>/', views.CertificateDetailView.as_view()),
     path('certificates/<uuid:pk>/preview/', views.preview_certificate),
+    path('certificates/<uuid:pk>/reissue/', views.reissue_certificate),
 
 
     # ================= TEMPLATE ================= 

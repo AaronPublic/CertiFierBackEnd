@@ -1,29 +1,36 @@
+# In-memory binary stream (used to build PDF before saving)
 from io import BytesIO
+from urllib.parse import urljoin
+
+# Used for formatting date fields
 from datetime import date, datetime
-from urllib.parse import urlparse
 
+# Used to save generated PDF to model
 from django.core.files.base import ContentFile
+from django.conf import settings
+from django.urls import reverse
+
+# Color utilities for PDF text
 from reportlab.lib import colors
+
+# Default page size
 from reportlab.lib.pagesizes import letter
+
+# Converts image file → PDF-readable object
 from reportlab.lib.utils import ImageReader
+
+# Core PDF drawing tool
 from reportlab.pdfgen import canvas
+
+# For landscape orientation
 from reportlab.lib.pagesizes import landscape
-import requests
-from PIL import Image
-
-
-def _cloudinary_png_url(url):
-    """Force Cloudinary image delivery as PNG for ReportLab compatibility."""
-    if not isinstance(url, str):
-        return url
-    if 'res.cloudinary.com' not in url or '/image/upload/' not in url:
-        return url
-    if '/image/upload/f_png/' in url:
-        return url
-    return url.replace('/image/upload/', '/image/upload/f_png/', 1)
+from reportlab.graphics.barcode import qr as qr_lib
+from reportlab.graphics.shapes import Drawing
+from reportlab.graphics import renderPDF
 
 
 def _clamp_pct(value, default=50.0):
+     # Ensures percentage values (xPct, yPct) stay within 0–100
     try:
         pct = float(value)
     except (TypeError, ValueError):
@@ -32,6 +39,7 @@ def _clamp_pct(value, default=50.0):
 
 
 def _parse_font_size(value, default=24):
+    # Ensures font size is within reasonable range
     try:
         size = float(value)
     except (TypeError, ValueError):
@@ -39,7 +47,24 @@ def _parse_font_size(value, default=24):
     return max(8.0, min(200.0, size))
 
 
+def _parse_positive_size(value, default=120.0):
+    try:
+        size = float(value)
+    except (TypeError, ValueError):
+        size = float(default)
+    return max(24.0, min(500.0, size))
+
+
+def _parse_positive_pct(value, default=10.0):
+    try:
+        pct = float(value)
+    except (TypeError, ValueError):
+        pct = float(default)
+    return max(1.0, min(100.0, pct))
+
+
 def _parse_color(value):
+    # Converts hex string (e.g. "#000000") → ReportLab color
     if isinstance(value, str) and value.strip():
         try:
             return colors.HexColor(value.strip())
@@ -49,7 +74,10 @@ def _parse_color(value):
 
 
 def _certificate_field_value(cert, key):
+    # Formats certificate fields dynamically based on marker "key"
     date_value = cert.date_issued
+
+    # Normalize date into string format
     if isinstance(date_value, datetime):
         formatted_date = date_value.date().isoformat()
     elif isinstance(date_value, date):
@@ -59,6 +87,7 @@ def _certificate_field_value(cert, key):
     else:
         formatted_date = str(date_value)
 
+    # Map marker keys → actual certificate fields
     mapping = {
         'full_name': cert.full_name,
         'course': cert.course,
@@ -67,10 +96,82 @@ def _certificate_field_value(cert, key):
         'title': cert.title,
         'certificate_id': cert.certificate_id,
     }
+    # Return empty if key not found
     return str(mapping.get(key, ''))
 
 
+def _build_qr_payload(cert):
+    encode_mode = str(getattr(settings, 'QR_ENCODE_MODE', 'certificate_id') or 'certificate_id').strip().lower()
+
+    if encode_mode == 'verification_url':
+        verify_path = reverse('verify_certificate', kwargs={'certificate_id': cert.certificate_id})
+        base_url = str(getattr(settings, 'VERIFICATION_BASE_URL', '') or '').strip()
+        if not base_url:
+            return verify_path
+
+        if not base_url.endswith('/'):
+            base_url = f"{base_url}/"
+        return urljoin(base_url, verify_path.lstrip('/'))
+
+    return cert.certificate_id
+
+
+def _draw_qr_from_marker(pdf, marker, page_width, page_height, verify_url):
+    x_pct = _clamp_pct(marker.get('xPct'), default=90.0)
+    y_pct = _clamp_pct(marker.get('yPct'), default=88.0)
+
+    width_pct = marker.get('widthPct')
+    height_pct = marker.get('heightPct')
+    size_pct = marker.get('sizePct')
+    size_px = marker.get('size')
+
+    if width_pct is not None and height_pct is not None:
+        qr_width = (_parse_positive_pct(width_pct, default=12.0) / 100.0) * page_width
+        qr_height = (_parse_positive_pct(height_pct, default=12.0) / 100.0) * page_height
+    elif size_pct is not None:
+        size_from_pct = (_parse_positive_pct(size_pct, default=16.0) / 100.0) * min(page_width, page_height)
+        qr_width = size_from_pct
+        qr_height = size_from_pct
+    else:
+        size = _parse_positive_size(size_px, default=min(page_width, page_height) * 0.16)
+        qr_width = size
+        qr_height = size
+
+    x = (x_pct / 100.0) * page_width
+    y = page_height - ((y_pct / 100.0) * page_height)
+
+    qr_width = _parse_positive_size(qr_width)
+    qr_height = _parse_positive_size(qr_height)
+
+    widget = qr_lib.QrCodeWidget(verify_url)
+    bounds = widget.getBounds()
+    x1, y1, x2, y2 = bounds
+    drawing = Drawing(qr_width, qr_height, transform=[
+        qr_width / (x2 - x1),
+        0,
+        0,
+        qr_height / (y2 - y1),
+        -x1 * qr_width / (x2 - x1),
+        -y1 * qr_height / (y2 - y1),
+    ])
+    drawing.add(widget)
+
+    # Marker coordinates are treated as top-left anchor for consistency with text marker UX.
+    renderPDF.draw(drawing, pdf, x, y - qr_height)
+
+
+def _draw_default_qr(pdf, page_width, page_height, verify_url):
+    default_size = min(page_width, page_height) * 0.16
+    marker = {
+        'xPct': 90.0,
+        'yPct': 88.0,
+        'size': default_size,
+    }
+    _draw_qr_from_marker(pdf, marker, page_width, page_height, verify_url)
+
+
 def _draw_default_layout(pdf, cert):
+    # Fallback layout if no markers are defined
     pdf.setFont('Helvetica', 14)
     pdf.setFillColor(colors.black)
     pdf.drawString(100, 750, f"Certificate ID: {cert.certificate_id}")
@@ -81,163 +182,142 @@ def _draw_default_layout(pdf, cert):
 
 
 def _load_background_reader(template):
-    if not (template and getattr(template, 'background', None)):
-        return None, None, None
-
-    background_file = template.background
-    has_any_ref = any([
-        bool(getattr(background_file, 'name', None)),
-        bool(getattr(background_file, 'public_id', None)),
-        bool(getattr(background_file, 'url', None)),
-    ])
-    if not has_any_ref:
+    # Loads background image from template for use in PDF
+    if not (template and template.background and template.background.name):
         return None, None, None
 
     try:
-        reader = None
+        # Get actual file path
+        image_path = template.background.path  # IMPORTANT
 
-        # Local/dev storages usually expose a filesystem path.
-        image_path = getattr(background_file, 'path', None)
-        if image_path:
-            reader = ImageReader(image_path)
+        # Convert to ReportLab-compatible object
+        reader = ImageReader(image_path)
 
-        # Cloud storages (e.g., Cloudinary) may only expose a remote URL.
-        if reader is None:
-            background_url = getattr(background_file, 'url', '')
-            if background_url and background_url.startswith('//'):
-                background_url = f"https:{background_url}"
-
-            background_url = _cloudinary_png_url(background_url)
-
-            parsed_url = urlparse(background_url) if background_url else None
-            if background_url and parsed_url and parsed_url.scheme in {'http', 'https'}:
-                try:
-                    response = requests.get(background_url, timeout=15)
-                    response.raise_for_status()
-                    image = Image.open(BytesIO(response.content)).convert('RGB')
-                    reader = ImageReader(image)
-                except requests.RequestException as req_err:
-                    print(f"BACKGROUND FETCH ERROR: {req_err}")
-                    # Fall through to next method
-
-        # Storage backends can also provide a file-like object.
-        if reader is None:
-            try:
-                with background_file.open('rb') as image_fp:
-                    image = Image.open(BytesIO(image_fp.read())).convert('RGB')
-                    reader = ImageReader(image)
-            except Exception as file_err:
-                print(f"BACKGROUND OPEN ERROR: {file_err}")
-
-        if reader is None:
-            return None, None, None
-
+        # Get image dimensions
         width, height = reader.getSize()
 
         return reader, width, height
 
     except Exception as e:
-        print(f"BACKGROUND LOAD ERROR: {e}")
+        print("BACKGROUND LOAD ERROR:", e)
         return None, None, None
 
 def build_certificate_pdf_bytes(cert):
-    try:
-        template = cert.template
-        markers = []
-        background_reader = None
-        page_width, page_height = letter
+    # Get linked template
+    template = cert.template
 
-        bg_reader, bg_width, bg_height = _load_background_reader(template)
-        if bg_reader is not None and bg_width and bg_height:
-            background_reader = bg_reader
-            if bg_width > bg_height:
-                page_width, page_height = landscape((bg_width, bg_height))
-            else:
-                page_width, page_height = bg_width, bg_height
+    # Placeholder positions
+    markers = []
+
+    # Background image object
+    background_reader = None
+
+    # Default page size
+    page_width, page_height = letter
+
+    # Load background image
+    bg_reader, bg_width, bg_height = _load_background_reader(template)
+    if bg_reader is not None and bg_width and bg_height:
+        background_reader = bg_reader
+
+        # Auto-adjust orientation (landscape if width > height)
+        if bg_width > bg_height:
+            page_width, page_height = landscape((bg_width, bg_height))
         else:
-            page_width, page_height = letter
+            page_width, page_height = bg_width, bg_height
+    else:
+        page_width, page_height = letter  # fallback safety
 
-        if template and isinstance(template.placeholders, dict):
-            raw_markers = template.placeholders.get('markers', [])
-            if isinstance(raw_markers, list):
-                markers = raw_markers
+        # Load placeholder markers from template JSON
+    if template and isinstance(template.placeholders, dict):
+        raw_markers = template.placeholders.get('markers', [])
+        if isinstance(raw_markers, list):
+            markers = raw_markers
 
-        buffer = BytesIO()
-        pdf = canvas.Canvas(buffer, pagesize=(page_width, page_height))
+    # Create PDF in memory
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=(page_width, page_height))
 
-        if background_reader is not None:
-            pdf.drawImage(
-                background_reader,
-                0,
-                0,
-                width=page_width,
-                height=page_height,
-                preserveAspectRatio=False,
-                mask='auto',
-            )
+    # Draw background image (if available)
+    if background_reader is not None:
+        pdf.drawImage(
+            background_reader,
+            0,
+            0,
+            width=page_width,
+            height=page_height,
+            preserveAspectRatio=False,
+            mask='auto',
+        )
 
-        rendered_marker = False
+    # Track if any text is drawn
+    rendered_marker = False
+    qr_drawn = False
+    verify_url = _build_qr_payload(cert)
 
-        for marker in markers:
-            if not isinstance(marker, dict):
-                continue
+    # Loop through all markers (dynamic positioning)
+    for marker in markers:
+        if not isinstance(marker, dict):
+            continue
 
-            key = marker.get('key')
-            value = _certificate_field_value(cert, key)
-            if not value:
-                continue
+        key = marker.get('key')
 
-            x_pct = _clamp_pct(marker.get('xPct'), default=50.0)
-            y_pct = _clamp_pct(marker.get('yPct'), default=50.0)
+        if key == 'qr_code':
+            _draw_qr_from_marker(pdf, marker, page_width, page_height, verify_url)
+            qr_drawn = True
+            continue
 
-            x = (x_pct / 100.0) * page_width
-            y = page_height - ((y_pct / 100.0) * page_height)
+        value = _certificate_field_value(cert, key)
+        if not value:
+            continue
+        
+         # Convert percentage → actual coordinates
+        x_pct = _clamp_pct(marker.get('xPct'), default=50.0)
+        y_pct = _clamp_pct(marker.get('yPct'), default=50.0)
 
-            font_size = _parse_font_size(marker.get('fontSize'), default=24)
-            align = str(marker.get('align', 'left')).lower()
+         # Style settings
+        x = (x_pct / 100.0) * page_width
+        y = page_height - ((y_pct / 100.0) * page_height)
 
-            pdf.setFont('Helvetica', font_size)
-            pdf.setFillColor(_parse_color(marker.get('color')))
+        font_size = _parse_font_size(marker.get('fontSize'), default=24)
+        align = str(marker.get('align', 'left')).lower()
 
-            if align == 'center':
-                pdf.drawCentredString(x, y, value)
-            elif align == 'right':
-                pdf.drawRightString(x, y, value)
-            else:
-                pdf.drawString(x, y, value)
+        pdf.setFont('Helvetica', font_size)
+        pdf.setFillColor(_parse_color(marker.get('color')))
 
-            rendered_marker = True
+        # Draw text with alignment
+        if align == 'center':
+            pdf.drawCentredString(x, y, value)
+        elif align == 'right':
+            pdf.drawRightString(x, y, value)
+        else:
+            pdf.drawString(x, y, value)
 
-        if not rendered_marker:
-            _draw_default_layout(pdf, cert)
+        rendered_marker = True
 
-        pdf.showPage()
-        pdf.save()
-        buffer.seek(0)
-        return buffer.getvalue()
+    # If no markers rendered → fallback layout
+    if not rendered_marker:
+        _draw_default_layout(pdf, cert)
 
-    except Exception as err:
-        # Absolute fallback: always return a valid minimal PDF.
-        print(f"PDF RENDER ERROR: {err}")
-        fallback = BytesIO()
-        pdf = canvas.Canvas(fallback, pagesize=letter)
-        pdf.setFont('Helvetica-Bold', 16)
-        pdf.drawString(72, 760, 'Certificate Preview')
-        pdf.setFont('Helvetica', 12)
-        pdf.drawString(72, 730, f"Certificate ID: {getattr(cert, 'certificate_id', 'N/A')}")
-        pdf.drawString(72, 710, f"Name: {getattr(cert, 'full_name', 'N/A')}")
-        pdf.drawString(72, 690, f"Course: {getattr(cert, 'course', 'N/A')}")
-        pdf.showPage()
-        pdf.save()
-        fallback.seek(0)
-        return fallback.getvalue()
+    if not qr_drawn:
+        _draw_default_qr(pdf, page_width, page_height, verify_url)
+
+     # Finalize PDF
+    pdf.showPage()
+    pdf.save()
+    buffer.seek(0)
+    # Return PDF as bytes
+    return buffer.getvalue()
 
 
 def generate_and_attach_certificate_pdf(cert):
+     # Generate PDF bytes
     pdf_bytes = build_certificate_pdf_bytes(cert)
+    # Save PDF to model file field
     cert.file.save(
         f"{cert.certificate_id}.pdf",
         ContentFile(pdf_bytes),
         save=True,
     )
+    # Return saved file reference
     return cert.file
