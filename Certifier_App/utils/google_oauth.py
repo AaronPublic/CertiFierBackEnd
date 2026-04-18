@@ -1,3 +1,4 @@
+# ...existing code...
 """
 Google OAuth utilities for handling Google authentication flow
 """
@@ -129,37 +130,48 @@ def exchange_code_for_token(code):
     return response.json()
 
 
+def _normalize_userinfo(raw):
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        "email": raw.get("email"),
+        "email_verified": bool(raw.get("email_verified", False)),
+        "name": raw.get("name") or raw.get("email"),
+        "picture": raw.get("picture"),
+        "sub": raw.get("sub") or raw.get("id"),
+        "hd": raw.get("hd"),
+    }
+
+
 def get_user_info_from_id_token(id_token_str):
     """
-    Decode and verify Google ID token to get user info
-    
-    Args:
-        id_token_str: ID token from Google
-    
-    Returns:
-        Dictionary with user info (email, name, picture, etc.)
-    """
-    try:
-        client_id, _, _ = _get_oauth_config()
-        if not client_id:
-            raise ValueError('Google OAuth is not configured: GOOGLE_OAUTH_CLIENT_ID is missing.')
+    Decode and verify Google ID token to get user info.
+    Falls back to userinfo endpoint if verification fails.
 
+    Returns normalized dict with keys: email, email_verified, name, picture, sub, hd
+    """
+    client_id, _, _ = _get_oauth_config()
+    if not client_id:
+        raise ValueError('Google OAuth is not configured: GOOGLE_OAUTH_CLIENT_ID is missing.')
+
+    try:
         # Verify and decode the ID token
-        idinfo = id_token.verify_oauth2_token(
-            id_token_str,
-            Request(),
-            client_id
-        )
-        
-        # Verify hosted domain
-        if 'hd' in idinfo:
-            if idinfo['hd'] != 'ua.edu.ph':
-                raise ValueError(f"Invalid hosted domain: {idinfo['hd']}")
-        
-        return idinfo
-    except Exception as e:
-        # Fallback: fetch user info from API if token verification fails
-        return get_user_info_from_access_token(id_token_str)
+        idinfo = id_token.verify_oauth2_token(id_token_str, Request(), client_id)
+
+        # Verify hosted domain if present
+        hd = idinfo.get('hd')
+        if hd and hd != 'ua.edu.ph':
+            raise ValueError(f"Invalid hosted domain: {hd}")
+
+        return _normalize_userinfo(idinfo)
+    except Exception:
+        # If token verification fails, try to treat the provided token as an access token
+        try:
+            raw = get_user_info_from_access_token(id_token_str)
+            return _normalize_userinfo(raw)
+        except Exception:
+            # Re-raise original verification exception if fallback also fails
+            raise
 
 
 def get_user_info_from_access_token(access_token):
@@ -188,4 +200,7 @@ def validate_school_email(email):
     Returns:
         True if valid school email, False otherwise
     """
+    if not email:
+        return False
     return email.lower().endswith('@ua.edu.ph')
+# ...existing code...
