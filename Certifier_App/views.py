@@ -1,9 +1,6 @@
 import csv
 import hashlib
 import uuid
-import base64
-from io import BytesIO
-from urllib.parse import urlparse
 from django.http import FileResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
@@ -25,7 +22,7 @@ from .serializers import (
 )
 
 from .utils.eddsa import sign_data, VERIFY_KEY, verify_signature
-from .utils.pdf_renderer import generate_and_attach_certificate_pdf, build_certificate_pdf_bytes
+from .utils.pdf_renderer import generate_and_attach_certificate_pdf
 from .utils.google_oauth import (
     get_google_auth_url,
     exchange_code_for_token,
@@ -37,20 +34,8 @@ from django.contrib.auth import get_user_model
 from .serializers import UserSerializer, CustomTokenObtainPairSerializer
 from django.views.decorators.clickjacking import xframe_options_exempt
 import secrets
-from rest_framework.parsers import MultiPartParser, FormParser
 
 User = get_user_model()
-
-
-# ================= UTILITY HELPERS =================
-def _secure_url(url):
-    """Normalize URL to HTTPS for production/iframe safety."""
-    if not url:
-        return None
-    parsed = urlparse(url)
-    if parsed.scheme == 'http':
-        return url.replace('http://', 'https://', 1)
-    return url
 
 
 # ================= GOOGLE OAUTH HELPERS =================
@@ -97,35 +82,36 @@ def get_or_create_user_from_google(google_user_data):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def google_login_initiate(request):
+    """
+    Initiate Google OAuth login flow
+    
+    Query params:
+        return_to: URL to redirect to after auth (required)
+        hd: Hosted domain restriction (default: ua.edu.ph)
+    
+    Returns:
+        Redirect to Google OAuth consent screen
+    """
     return_to = request.query_params.get('return_to')
     hd = request.query_params.get('hd', 'ua.edu.ph')
-
+    
     if not return_to:
         return Response(
             {'error': 'return_to parameter is required'},
             status=status.HTTP_400_BAD_REQUEST
         )
-
-    # Encode return_to in state so callback can recover even if session is unavailable.
-    encoded_return_to = base64.urlsafe_b64encode(return_to.encode()).decode().rstrip('=')
-    state = f"{secrets.token_urlsafe(32)}:{encoded_return_to}"
-
-    # ✅ Store in session ONLY
-    try:
-        request.session['google_oauth_state'] = state
-        request.session['google_oauth_return_to'] = return_to
-        request.session.save()
-    except Exception:
-        pass
-
-    try:
-        google_auth_url = get_google_auth_url(state, hd=hd)
-    except Exception as exc:
-        return Response(
-            {'error': f'Google login initiation failed: {str(exc)}'},
-            status=500
-        )
-
+    
+    # Generate state token for CSRF protection
+    state = f"{secrets.token_urlsafe(32)}:{return_to}"
+    
+    # Store state in session for verification in callback
+    request.session['google_oauth_state'] = state
+    request.session['google_oauth_return_to'] = return_to
+    request.session.save()
+    
+    # Get Google auth URL
+    google_auth_url = get_google_auth_url(state, return_to, hd)
+    
     return HttpResponseRedirect(google_auth_url)
 
 
@@ -147,24 +133,9 @@ def google_callback(request):
     state = request.query_params.get('state')
     code = request.query_params.get('code')
     
-    # Get stored return_to/state from session when available.
-    try:
-        session_state = request.session.get('google_oauth_state')
-        return_to = request.session.get('google_oauth_return_to')
-    except Exception:
-        session_state = None
-        return_to = None
-
-    # Stateless fallback: parse return_to from state token format "nonce:base64url(return_to)".
-    if not return_to and state and ':' in state:
-        encoded_part = state.split(':', 1)[1]
-        try:
-            padding = '=' * (-len(encoded_part) % 4)
-            return_to = base64.urlsafe_b64decode(f"{encoded_part}{padding}".encode()).decode()
-        except Exception:
-            return_to = None
-    if not return_to:
-        return_to = '/login'
+    # Get stored return_to and state from session
+    session_state = request.session.get('google_oauth_state')
+    return_to = request.session.get('google_oauth_return_to', '/login')
     
     # Handle user cancellations or Google errors
     if error:
@@ -177,18 +148,8 @@ def google_callback(request):
         return_url = f"{return_to}?error={error_msg}"
         return HttpResponseRedirect(return_url)
     
-    # Validate state for CSRF protection.
-    if not state:
-        return_url = f"{return_to}?error=CSRF validation failed"
-        return HttpResponseRedirect(return_url)
-
-    # Prefer strict session validation when session state exists.
-    if session_state and state != session_state:
-        return_url = f"{return_to}?error=CSRF validation failed"
-        return HttpResponseRedirect(return_url)
-
-    # Fallback validation for stateless mode.
-    if not session_state and ':' not in state:
+    # Validate state for CSRF protection
+    if not session_state or not state or state != session_state:
         return_url = f"{return_to}?error=CSRF validation failed"
         return HttpResponseRedirect(return_url)
     
@@ -223,13 +184,10 @@ def google_callback(request):
         # Get full name
         full_name = f"{user.first_name} {user.last_name}".strip() or user.username
         
-        # Clear session data when session backend is available.
-        try:
-            request.session.pop('google_oauth_state', None)
-            request.session.pop('google_oauth_return_to', None)
-            request.session.save()
-        except Exception:
-            pass
+        # Clear session data
+        request.session.pop('google_oauth_state', None)
+        request.session.pop('google_oauth_return_to', None)
+        request.session.save()
         
         # Build redirect URL with tokens
         params = {
@@ -237,13 +195,9 @@ def google_callback(request):
             'role': user.role,
             'full_name': full_name,
         }
-
+        
         from urllib.parse import urlencode
-        encoded_params = urlencode(params)
-
-        # Preserve frontend router format exactly as provided in return_to.
-        separator = '&' if '?' in return_to else '?'
-        redirect_url = f"{return_to}{separator}{encoded_params}"
+        redirect_url = f"{return_to}?{urlencode(params)}"
         
         return HttpResponseRedirect(redirect_url)
     
@@ -390,16 +344,49 @@ class CertificateDetailView(generics.RetrieveUpdateDestroyAPIView):
         instance.delete()
 
 
-def _get_or_generate_certificate_pdf(cert):
-    # If the certificate has a visual template, regenerate to avoid serving
-    # previously cached plain fallback PDFs from older deployments.
-    if cert.template_id and cert.template and cert.template.background:
-        try:
-            generate_and_attach_certificate_pdf(cert)
-            return cert.file.open('rb')
-        except Exception:
-            pass
+# ================= REISSUE CERTIFICATE =================
+@api_view(['POST'])
+@permission_classes([IsAdminUserRole])
+def reissue_certificate(request, pk):
+    """Reissue a certificate with updated information"""
+    cert = get_object_or_404(Certificate, pk=pk)
+    
+    try:
+        # Create new certificate with updated data
+        new_cert = Certificate.objects.create(
+            template=cert.template,
+            title=request.data.get('title', cert.title),
+            full_name=request.data.get('full_name', cert.full_name),
+            course=request.data.get('course', cert.course),
+            issued_by=request.data.get('issued_by', cert.issued_by),
+            date_issued=request.data.get('date_issued', cert.date_issued),
+            created_by=request.user,
+            owner_id=request.data.get('owner') or cert.owner_id
+        )
+        
+        # EdDSA signing and hash
+        data_string = new_cert.get_data_string()
+        new_cert.data_hash = hashlib.sha256(data_string.encode()).hexdigest()
+        new_cert.original_data_hash = new_cert.data_hash
+        new_cert.signature = sign_data(data_string)
+        new_cert.public_key = VERIFY_KEY.encode().hex()
+        new_cert.save()
+        
+        # Generate PDF
+        generate_and_attach_certificate_pdf(new_cert)
+        
+        return Response(
+            CertificateSerializer(new_cert).data,
+            status=status.HTTP_201_CREATED
+        )
+    except Exception as e:
+        return Response(
+            {"error": str(e)},
+            status=status.HTTP_400_BAD_REQUEST
+        )
 
+
+def _get_or_generate_certificate_pdf(cert):
     if cert.file and cert.file.name:
         try:
             if cert.file.storage.exists(cert.file.name):
@@ -407,14 +394,8 @@ def _get_or_generate_certificate_pdf(cert):
         except Exception:
             pass
 
-    # First try persisted storage-backed PDF so future requests can reuse it.
-    try:
-        generate_and_attach_certificate_pdf(cert)
-        return cert.file.open('rb')
-    except Exception:
-        # Fallback: stream generated bytes without relying on storage backend.
-        pdf_bytes = build_certificate_pdf_bytes(cert)
-        return BytesIO(pdf_bytes)
+    generate_and_attach_certificate_pdf(cert)
+    return cert.file.open('rb')
 
 
 # ================= VERIFY (PUBLIC) =================
@@ -457,12 +438,10 @@ def verify_certificate(request, certificate_id):
     cert.status = "VALID"
     cert.save(update_fields=['status'])
 
-    # Always return a public preview endpoint URL for verify flows.
-    file_url = _secure_url(
-        request.build_absolute_uri(
-            reverse('verify_certificate_preview', args=[cert.certificate_id])
-        )
-    )
+    # Kunin ang absolute URL ng file para ma-access ng React
+    file_url = None
+    if cert.file:
+        file_url = request.build_absolute_uri(cert.file.url)
 
     return Response({
         "certificate_id": cert.certificate_id,
@@ -473,25 +452,6 @@ def verify_certificate(request, certificate_id):
         "status": cert.status,
         "file_url": file_url  # Importante ito para sa preview
     })
-
-
-@api_view(['GET'])
-@permission_classes([AllowAny])
-@xframe_options_exempt
-def verify_certificate_preview(request, certificate_id):
-    try:
-        cert = get_object_or_404(Certificate, certificate_id=certificate_id)
-
-        file_obj = _get_or_generate_certificate_pdf(cert)
-
-        return FileResponse(
-            file_obj,
-            content_type='application/pdf',
-            as_attachment=False,
-            filename=f"{cert.certificate_id}.pdf"
-        )
-    except Exception as exc:
-        return Response({'error': f'Preview generation failed: {str(exc)}'}, status=500)
 
 # ================= USER MANAGEMENT (ADMIN ONLY) =================
 
@@ -513,53 +473,43 @@ class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def download_certificate(request, pk):
-    try:
-        cert = get_object_or_404(Certificate, pk=pk)
+    cert = get_object_or_404(Certificate, pk=pk)
 
-        if cert.owner != request.user and request.user.role != 'admin':
-            return Response({"error": "Unauthorized"}, status=403)
+    if cert.owner != request.user and request.user.role != 'admin':
+        return Response({"error": "Unauthorized"}, status=403)
 
-        file_obj = _get_or_generate_certificate_pdf(cert)
+    file_obj = _get_or_generate_certificate_pdf(cert)
 
-        return FileResponse(
-            file_obj,
-            content_type='application/pdf',
-            as_attachment=True,
-            filename=f"{cert.certificate_id}.pdf"
-        )
-    except Exception as exc:
-        return Response({'error': f'Download failed: {str(exc)}'}, status=500)
+    return FileResponse(
+        file_obj,
+        as_attachment=True,
+        filename=f"{cert.certificate_id}.pdf"
+    )
 
 
 # ================= CERTIFICATE PREVIEW =================
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
-@xframe_options_exempt
 def preview_certificate(request, pk):
-    try:
-        cert = get_object_or_404(Certificate, pk=pk)
+    cert = get_object_or_404(Certificate, pk=pk)
 
-        if cert.owner != request.user and request.user.role != 'admin':
-            return Response({"error": "Unauthorized"}, status=403)
+    if cert.owner != request.user and request.user.role != 'admin':
+        return Response({"error": "Unauthorized"}, status=403)
 
-        file_obj = _get_or_generate_certificate_pdf(cert)
+    file_obj = _get_or_generate_certificate_pdf(cert)
 
-        return FileResponse(
-            file_obj,
-            content_type='application/pdf',
-            as_attachment=False,
-            filename=f"{cert.certificate_id}.pdf"
-        )
-    except Exception as exc:
-        return Response({'error': f'Preview failed: {str(exc)}'}, status=500)
+    return FileResponse(
+        file_obj,
+        as_attachment=False,
+        filename=f"{cert.certificate_id}.pdf"
+    )
 
 
 # ================= TEMPLATE =================
 class TemplateView(generics.ListCreateAPIView):
     queryset = Template.objects.all()
     serializer_class = TemplateSerializer
-    permission_classes = [IsAuthenticated]
-    parser_classes = [MultiPartParser, FormParser]
+    permission_classes = [IsAdminUserRole]
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
@@ -601,26 +551,6 @@ def process_bulk_upload(request, pk):
             decoded = file.read().decode('utf-8').splitlines()
             reader = list(csv.DictReader(decoded))  # Convert to list to count rows
 
-        if not reader:
-            upload.status = "FAILED"
-            upload.save(update_fields=['status'])
-            return Response({"error": "CSV file is empty"}, status=400)
-
-        # Validate required columns exist
-        required_cols = {'title', 'full_name', 'course', 'issued_by', 'date_issued'}
-        if not reader[0]:
-            upload.status = "FAILED"
-            upload.save(update_fields=['status'])
-            return Response({"error": "CSV has no header row"}, status=400)
-
-        missing_cols = required_cols - set(reader[0].keys())
-        if missing_cols:
-            upload.status = "FAILED"
-            upload.save(update_fields=['status'])
-            return Response({
-                "error": f"CSV missing required columns: {', '.join(sorted(missing_cols))}"
-            }, status=400)
-
         upload.status = "PROCESSING"
         upload.total_records = len(reader)
         upload.processed_records = 0
@@ -628,45 +558,31 @@ def process_bulk_upload(request, pk):
 
         created = []
 
-        for idx, row in enumerate(reader, start=1):
-            try:
-                user = request.user  
+        for row in reader:
+            user = request.user  
 
-                cert = Certificate.objects.create(
-                    template=upload.template,
-                    title=str(row.get('title', '')).strip(),
-                    full_name=str(row.get('full_name', '')).strip(),
-                    course=str(row.get('course', '')).strip(),
-                    issued_by=str(row.get('issued_by', '')).strip(),
-                    date_issued=row.get('date_issued'),
-                    created_by=user,
-                    owner=user
-                )
+            cert = Certificate.objects.create(
+                template=upload.template,
+                title=row['title'],
+                full_name=row['full_name'],
+                course=row['course'],
+                issued_by=row['issued_by'],
+                date_issued=row['date_issued'],
+                created_by=user,
+                owner=user
+            )
 
-                # EdDSA signing and hash
-                data_string = cert.get_data_string()
-                cert.data_hash = hashlib.sha256(data_string.encode()).hexdigest()
-                cert.original_data_hash = cert.data_hash
-                cert.signature = sign_data(data_string)
-                cert.public_key = VERIFY_KEY.encode().hex()
-                cert.save()
+            # EdDSA signing and hash
+            data_string = cert.get_data_string()
+            cert.data_hash = hashlib.sha256(data_string.encode()).hexdigest()
+            cert.original_data_hash = cert.data_hash
+            cert.signature = sign_data(data_string)
+            cert.public_key = VERIFY_KEY.encode().hex()
+            cert.save()
 
-                # PDF generation with error catching
-                try:
-                    generate_and_attach_certificate_pdf(cert)
-                except Exception as pdf_error:
-                    print(f"PDF generation failed for row {idx}: {str(pdf_error)}")
-                    # Continue processing even if PDF fails; cert is saved
+            generate_and_attach_certificate_pdf(cert)
 
-                created.append(cert.certificate_id)
-
-            except Exception as row_error:
-                print(f"Row {idx} failed: {str(row_error)}")
-                upload.status = "FAILED"
-                upload.save(update_fields=['status'])
-                return Response({
-                    "error": f"Error processing row {idx}: {str(row_error)}"
-                }, status=400)
+            created.append(cert.certificate_id)
 
             # Update processed_records dynamically
             upload.processed_records += 1
@@ -676,10 +592,10 @@ def process_bulk_upload(request, pk):
         upload.status = "COMPLETED"
         upload.save(update_fields=['status'])
 
-        return Response({"created": created, "total": len(created)})
+        return Response({"created": created})
 
     except Exception as e:
-        print(f"Bulk upload failed: {str(e)}")
+        # Mark upload as failed in case of error
         upload.status = "FAILED"
         upload.save(update_fields=['status'])
-        return Response({"error": f"Upload processing failed: {str(e)}"}, status=500)
+        return Response({"error": str(e)}, status=500)
