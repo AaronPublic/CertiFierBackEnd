@@ -2,6 +2,8 @@
 """
 Google OAuth utilities for handling Google authentication flow
 """
+import base64
+import secrets
 import os
 import json
 import requests
@@ -78,12 +80,31 @@ def _get_oauth_config():
     ])
     return client_id, client_secret, redirect_uri
 
+def _encode_state(data: dict) -> str:
+    raw = json.dumps(data).encode()
+    return base64.urlsafe_b64encode(raw).decode()
 
-def get_google_auth_url(state, hd='ua.edu.ph'):
+
+def _decode_state(state: str) -> dict:
+    try:
+        raw = base64.urlsafe_b64decode(state.encode())
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+def get_google_auth_url(return_to, hd='ua.edu.ph'):
     client_id, _, redirect_uri = _get_oauth_config()
 
     if not client_id:
         raise ValueError("Missing GOOGLE_OAUTH_CLIENT_ID")
+
+    # ✅ STATE now contains return_to (no session needed)
+    state_payload = {
+        "nonce": secrets.token_urlsafe(16),
+        "return_to": return_to,
+    }
+
+    state = _encode_state(state_payload)
 
     params = {
         'client_id': client_id,
@@ -93,7 +114,7 @@ def get_google_auth_url(state, hd='ua.edu.ph'):
         'state': state,
         'hd': hd,
         'access_type': 'offline',
-        'prompt': 'consent',  # ✅ important
+        'prompt': 'consent',
     }
 
     return f"{GOOGLE_OAUTH_AUTH_URL}?{urlencode(params)}"
@@ -203,4 +224,13 @@ def validate_school_email(email):
     if not email:
         return False
     return email.lower().endswith('@ua.edu.ph')
-# ...existing code...
+
+__all__ = [
+    'get_google_auth_url',
+    'exchange_code_for_token',
+    'get_user_info_from_id_token',
+    'get_user_info_from_access_token',
+    'validate_school_email',
+    '_decode_state',  
+    '_encode_state',  
+]
