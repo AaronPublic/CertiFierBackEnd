@@ -20,6 +20,9 @@ from .serializers import (
     BulkUploadCreateSerializer,
     CertificatePreviewSerializer
 )
+from django.views.decorators.clickjacking import xframe_options_exempt
+import uuid
+import secrets
 
 from .utils.eddsa import sign_data, VERIFY_KEY, verify_signature
 from .utils.pdf_renderer import generate_and_attach_certificate_pdf
