@@ -113,8 +113,7 @@ def google_login_initiate(request):
     request.session.save()
     
     # Get Google auth URL
-    google_auth_url = get_google_auth_url(state, return_to, hd)
-    
+    google_auth_url = get_google_auth_url(state, hd)    
     return HttpResponseRedirect(google_auth_url)
 
 
