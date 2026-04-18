@@ -94,7 +94,6 @@ def google_login_initiate(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
-    # ❌ REMOVE SESSION
     google_auth_url = get_google_auth_url(return_to, hd)
 
     return HttpResponseRedirect(google_auth_url)
@@ -102,14 +101,11 @@ def google_login_initiate(request):
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
-d@api_view(['GET'])
-@permission_classes([AllowAny])
 def google_callback(request):
     error = request.query_params.get('error')
     state = request.query_params.get('state')
     code = request.query_params.get('code')
 
-    # ✅ Decode state (no session needed)
     state_data = _decode_state(state)
     return_to = state_data.get('return_to', '/login')
 
@@ -120,7 +116,6 @@ def google_callback(request):
         return HttpResponseRedirect(f"{return_to}?error=No code received")
 
     try:
-        # 🔥 Exchange code
         token_data = exchange_code_for_token(code)
 
         id_token_str = token_data.get('id_token')
@@ -129,16 +124,13 @@ def google_callback(request):
         if not id_token_str:
             return HttpResponseRedirect(f"{return_to}?error=No ID token")
 
-        # 🔥 Get user info
         try:
             user_data = get_user_info_from_id_token(id_token_str)
         except Exception:
             user_data = get_user_info_from_access_token(access_token_str)
 
-        # 🔥 Create/get user
         user, _ = get_or_create_user_from_google(user_data)
 
-        # 🔥 Generate JWT
         refresh = RefreshToken.for_user(user)
         access_token = str(refresh.access_token)
 
