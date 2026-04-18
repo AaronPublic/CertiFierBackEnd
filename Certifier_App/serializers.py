@@ -1,6 +1,5 @@
 import hashlib
 import json
-from urllib.parse import urlparse
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import get_user_model
@@ -52,27 +51,42 @@ class UserSerializer(serializers.ModelSerializer):
 # ================= TEMPLATE =================
 class TemplateSerializer(serializers.ModelSerializer):
     placeholders = serializers.JSONField(required=False)
-    background = serializers.ImageField(required=False, allow_null=True)
-    signature_image = serializers.ImageField(required=False, allow_null=True)
 
     class Meta:
         model = Template
         fields = '__all__'
         read_only_fields = ['id', 'created_by', 'created_at']
 
-    def _secure_url(self, url):
-        if not url:
-            return None
-        parsed = urlparse(url)
-        if parsed.scheme == 'http':
-            return url.replace('http://', 'https://', 1)
-        return url
+    def validate_placeholders(self, value):
+        # Normalize empty values so template upload does not fail with server errors.
+        if value in (None, ''):
+            return {'markers': []}
 
-    def to_representation(self, instance):
-        data = super().to_representation(instance)
-        data['background'] = self._secure_url(data.get('background'))
-        data['signature_image'] = self._secure_url(data.get('signature_image'))
-        return data
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise serializers.ValidationError('placeholders must be valid JSON.') from exc
+
+        if not isinstance(value, dict):
+            raise serializers.ValidationError('placeholders must be a JSON object.')
+
+        markers = value.get('markers', [])
+        if markers is None:
+            value['markers'] = []
+        elif not isinstance(markers, list):
+            raise serializers.ValidationError("placeholders.markers must be a list.")
+
+        return value
+
+    def create(self, validated_data):
+        validated_data.setdefault('placeholders', {'markers': []})
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        if 'placeholders' in validated_data and validated_data['placeholders'] in (None, ''):
+            validated_data['placeholders'] = {'markers': []}
+        return super().update(instance, validated_data)
 
 
 # ================= CERTIFICATE =================
@@ -183,10 +197,8 @@ class BulkUploadCreateSerializer(serializers.ModelSerializer):
         user = request.user
 
         validated_data.pop('uploaded_by', None)
-        try:
-            return BulkUpload.objects.create(
-                uploaded_by=user,
-                **validated_data
-            )
-        except Exception as exc:
-            raise serializers.ValidationError({'csv_file': str(exc)}) from exc
+
+        return BulkUpload.objects.create(
+            uploaded_by=user,
+            **validated_data
+        )
