@@ -85,36 +85,18 @@ def get_or_create_user_from_google(google_user_data):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def google_login_initiate(request):
-    """
-    Initiate Google OAuth login flow
-    
-    Query params:
-        return_to: URL to redirect to after auth (required)
-        hd: Hosted domain restriction (default: ua.edu.ph)
-    
-    Returns:
-        Redirect to Google OAuth consent screen
-    """
     return_to = request.query_params.get('return_to')
     hd = request.query_params.get('hd', 'ua.edu.ph')
-    
+
     if not return_to:
         return Response(
             {'error': 'return_to parameter is required'},
             status=status.HTTP_400_BAD_REQUEST
         )
-    
-    # Generate state token for CSRF protection
-    state = f"{secrets.token_urlsafe(32)}:{return_to}"
-    
-    # Store state in session for verification in callback
-    request.session['google_oauth_state'] = state
-    request.session['google_oauth_return_to'] = return_to
-    request.session.save()
-    
-    # Get Google auth URL
-    google_auth_url = get_google_auth_url(state, return_to, hd)
-    
+
+    # ❌ REMOVE SESSION
+    google_auth_url = get_google_auth_url(return_to, hd)
+
     return HttpResponseRedirect(google_auth_url)
 
 
