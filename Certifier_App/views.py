@@ -95,13 +95,9 @@ def google_login_initiate(request):
         )
 
     # ❌ REMOVE SESSION
-    state = secrets.token_urlsafe(32)
+    
+    google_auth_url = get_google_auth_url(return_to, hd)
 
-    request.session['google_oauth_state'] = state
-    request.session['google_oauth_return_to'] = return_to
-    request.session.save()
-
-    google_auth_url = get_google_auth_url(return_to, hd, state)
     return HttpResponseRedirect(google_auth_url)
 
 
